@@ -1,0 +1,11 @@
+[workspace]
+
+members = [
+    "prolink",
+    "prolink-util",
+]
+
+default-members = [
+    "prolink",
+    "prolink-util",
+]
