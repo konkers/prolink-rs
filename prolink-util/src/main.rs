@@ -108,7 +108,7 @@ async fn web(decks_rx: watch::Receiver<HashMap<u8, DeckInfo>>) -> Result<()> {
             Ok(())
         }));
     app.at("/art").serve_dir("./art/")?;
-    app.listen("127.0.0.1:8080").await?;
+    app.listen("127.0.0.1:8081").await?;
     Ok(())
 }
 #[tokio::main]
