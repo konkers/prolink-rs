@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Peer {
     pub name: String,
@@ -11,6 +13,7 @@ pub struct Track {
     pub track_slot: u8,
     pub track_type: u8,
     pub rekordbox_id: u32,
+    pub metadata: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

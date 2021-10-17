@@ -16,6 +16,7 @@ use tokio::{
 };
 
 mod message;
+mod metadata;
 mod proto;
 
 pub use message::Message;
@@ -63,13 +64,15 @@ pub struct Prolink {
     child_tasks: Vec<JoinHandle<()>>,
     msg_rx: mpsc::Receiver<Message>,
     msg_tx: mpsc::Sender<Message>,
+    peers_rx: watch::Receiver<HashMap<u8, Peer>>,
 }
 
 impl Prolink {
     pub async fn join(config: Config) -> Result<Prolink> {
         let (msg_tx, msg_rx) = mpsc::channel(256);
         let (joined_tx, mut joined_rx) = watch::channel(false);
-        let mut membership = Membership::new(&config, joined_tx, msg_tx.clone()).await?;
+        let (peers_tx, peers_rx) = watch::channel(HashMap::new());
+        let mut membership = Membership::new(&config, joined_tx, peers_tx, msg_tx.clone()).await?;
 
         let join_handle = tokio::spawn(async move {
             if let Err(e) = membership.run().await {
@@ -86,11 +89,17 @@ impl Prolink {
             child_tasks: vec![join_handle],
             msg_rx,
             msg_tx,
+            peers_rx,
         })
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        let status = StatusTask::new(&self.config.clone(), self.msg_tx.clone()).await?;
+        let status = StatusTask::new(
+            &self.config.clone(),
+            self.peers_rx.clone(),
+            self.msg_tx.clone(),
+        )
+        .await?;
 
         let status_handle = tokio::spawn(async move {
             if let Err(e) = status.run().await {
@@ -142,6 +151,7 @@ impl Peer {
 struct Membership {
     config: Config,
     joined_tx: watch::Sender<bool>,
+    peers_tx: watch::Sender<HashMap<u8, Peer>>,
     msg_tx: mpsc::Sender<Message>,
     socket: UdpSocket,
     my_addr: SocketAddr,
@@ -155,6 +165,7 @@ impl Membership {
     async fn new(
         config: &Config,
         joined_tx: watch::Sender<bool>,
+        peers_tx: watch::Sender<HashMap<u8, Peer>>,
         msg_tx: mpsc::Sender<Message>,
     ) -> Result<Membership> {
         let interfaces = datalink::interfaces();
@@ -178,6 +189,7 @@ impl Membership {
         Ok(Membership {
             config: config.clone(),
             joined_tx,
+            peers_tx,
             msg_tx,
             socket,
             my_addr,
@@ -198,7 +210,7 @@ impl Membership {
             .filter(|(_id, peer)| (now - peer.last_seen) > Duration::from_secs(10))
             .map(|(id, _peer)| *id)
             .collect();
-        for id in timed_out_peers {
+        for id in &timed_out_peers {
             if let Some(peer) = self.peers.remove(&id) {
                 self.msg_tx
                     .send(Message::PeerLeft(message::Peer {
@@ -207,6 +219,12 @@ impl Membership {
                     }))
                     .await?;
             }
+        }
+
+        if timed_out_peers.len() > 0 {
+            self.peers_tx
+                .send(self.peers.clone())
+                .map_err(|e| anyhow!("failed to send new peers list: {}", e))?;
         }
 
         Ok(())
@@ -388,6 +406,10 @@ impl Membership {
                     device_num: peer.device_num,
                 }))
                 .await?;
+
+            self.peers_tx
+                .send(self.peers.clone())
+                .map_err(|e| anyhow!("failed to send new peers list: {}", e))?;
         }
 
         Ok(())
@@ -395,16 +417,24 @@ impl Membership {
 }
 
 struct StatusTask {
+    config: Config,
     socket: UdpSocket,
+    peers_rx: watch::Receiver<HashMap<u8, Peer>>,
     msg_tx: mpsc::Sender<Message>,
     current_tracks: HashMap<u8, message::Track>,
 }
 
 impl StatusTask {
-    async fn new(_config: &Config, msg_tx: mpsc::Sender<Message>) -> Result<StatusTask> {
+    async fn new(
+        config: &Config,
+        peers_rx: watch::Receiver<HashMap<u8, Peer>>,
+        msg_tx: mpsc::Sender<Message>,
+    ) -> Result<StatusTask> {
         let socket = UdpSocket::bind("0.0.0.0:50002").await?;
         Ok(StatusTask {
+            config: config.clone(),
             socket,
+            peers_rx,
             msg_tx,
             current_tracks: HashMap::new(),
         })
@@ -442,12 +472,18 @@ impl StatusTask {
     }
 
     async fn handle_player_status_packet(&mut self, pkt: &proto::PlayerStatusPacket) -> Result<()> {
+        // Ignore packets form unknown peers
+        if !self.peers_rx.borrow().contains_key(&pkt.device_num) {
+            return Ok(());
+        }
+
         let track = message::Track {
             player_device: pkt.device_num,
             track_device: pkt.track_device,
             track_slot: pkt.track_slot,
             track_type: pkt.track_type,
             rekordbox_id: pkt.rekordbox_id,
+            metadata: HashMap::new(),
         };
 
         let new = if let Some(prev) = self.current_tracks.insert(pkt.device_num, track.clone()) {
@@ -457,9 +493,37 @@ impl StatusTask {
         };
 
         if new {
-            self.msg_tx.send(Message::NewTrack(track)).await?;
-        }
+            let peer = self
+                .peers_rx
+                .borrow()
+                .get(&track.player_device)
+                .ok_or(anyhow!("unable to look up peer: {}", track.player_device))?
+                .clone();
 
+            if track.rekordbox_id != 0 {
+                let msg_tx = self.msg_tx.clone();
+                let dev_num = self.config.device_num;
+                tokio::spawn(async move {
+                    if let Err(e) = Self::fecth_metadata(dev_num, peer, track, msg_tx).await {
+                        println!("metadata fetch failed: {}", e);
+                    }
+                });
+            } else {
+                self.msg_tx.send(Message::NewTrack(track)).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn fecth_metadata(
+        our_device_num: u8,
+        peer: Peer,
+        mut track: message::Track,
+        msg_tx: mpsc::Sender<Message>,
+    ) -> Result<()> {
+        let port = metadata::get_metadata_port(&peer.ip_addr).await?;
+        metadata::get_metadata(our_device_num, &mut track, &peer.ip_addr, port).await?;
+        msg_tx.send(Message::NewTrack(track)).await?;
         Ok(())
     }
 }
