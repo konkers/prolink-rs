@@ -39,51 +39,20 @@ pub(crate) async fn get_metadata(
 ) -> Result<()> {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3])), port);
 
-    let mut stream = TcpStream::connect(addr).await?;
-
-    let msg = Packet::new().with_field(Field::U32(0x1)).to_bytes()?;
-
-    stream.write_all(&msg).await?;
-    let mut buf = [0; 4096];
-    let len = stream.read(&mut buf).await?;
-
-    if buf[0..len] != msg {
-        return Err(anyhow!("did not get connection reply from metadata server").into());
-    }
-
-    let mut reader = MessageReader::new();
-    let mut msg_buf = Vec::new();
-
-    // Initial Handshake
-    msg_buf.clear();
-    Message::new(0xfffffffe, 0x0, vec![Field::U32(our_device_num as u32)])?.encode(&mut msg_buf)?;
-    stream.write_all(&msg_buf).await?;
-
-    let response = reader.read_message(&mut stream).await?;
-    assert_eq!(response.args[0], Field::U32(0x0));
-
-    let mut tx_id: u32 = 0;
+    let mut conn = MetadataConnection::connect(&addr, our_device_num).await?;
 
     // Metadata Request
-    msg_buf.clear();
-    tx_id += 1;
-    Message::new(
-        tx_id,
+    conn.send_message(
         0x2002,
         vec![
             Field::dmst(our_device_num, 0x1, track.track_slot, track.track_type),
             Field::U32(track.rekordbox_id),
         ],
-    )?
-    .encode(&mut msg_buf)?;
-    stream.write_all(&msg_buf).await?;
+    )
+    .await?;
 
-    let response = reader.read_message(&mut stream).await?;
-    if response.args.len() != 2
-        || response.args[0] != Field::U32(0x2002)
-        || response.tx_id != tx_id
-        || response.ty != 0x4000
-    {
+    let response = conn.read_message().await?;
+    if response.args.len() != 2 || response.args[0] != Field::U32(0x2002) || response.ty != 0x4000 {
         return Err(anyhow!("can't find metadata for tack").into());
     }
     let num_fields = match response.args[1] {
@@ -94,10 +63,7 @@ pub(crate) async fn get_metadata(
     };
 
     // Render Menu Request
-    msg_buf.clear();
-    tx_id += 1;
-    Message::new(
-        tx_id,
+    conn.send_message(
         0x3000,
         vec![
             Field::dmst(our_device_num, 0x1, track.track_slot, track.track_type),
@@ -107,12 +73,11 @@ pub(crate) async fn get_metadata(
             Field::U32(num_fields), // total
             Field::U32(0x0),
         ],
-    )?
-    .encode(&mut msg_buf)?;
-    stream.write_all(&msg_buf).await?;
+    )
+    .await?;
 
     loop {
-        let response = reader.read_message(&mut stream).await?;
+        let response = conn.read_message().await?;
 
         if response.ty == 0x4201 {
             break;
@@ -130,19 +95,57 @@ pub(crate) async fn get_metadata(
     Ok(())
 }
 
-struct MessageReader {
+struct MetadataConnection {
+    stream: TcpStream,
     buf: BytesMut,
+    tx_id: u32,
 }
 
-impl MessageReader {
-    fn new() -> MessageReader {
-        MessageReader {
-            buf: BytesMut::with_capacity(4096),
+impl MetadataConnection {
+    async fn connect(addr: &SocketAddr, our_device_num: u8) -> Result<MetadataConnection> {
+        let mut stream = TcpStream::connect(addr).await?;
+
+        let msg = Packet::new().with_field(Field::U32(0x1)).to_bytes()?;
+
+        stream.write_all(&msg).await?;
+        let mut buf = [0; 4096];
+        let len = stream.read(&mut buf).await?;
+
+        if buf[0..len] != msg {
+            return Err(anyhow!("did not get connection reply from metadata server").into());
         }
+
+        let mut msg_buf = Vec::new();
+
+        // Initial Handshake
+        msg_buf.clear();
+        Message::new(0xfffffffe, 0x0, vec![Field::U32(our_device_num as u32)])?
+            .encode(&mut msg_buf)?;
+        stream.write_all(&msg_buf).await?;
+
+        let mut conn = MetadataConnection {
+            stream,
+            buf: BytesMut::with_capacity(4096),
+            tx_id: 0,
+        };
+
+        let response = conn.read_message().await?;
+        assert_eq!(response.args[0], Field::U32(0x0));
+
+        Ok(conn)
+    }
+
+    async fn send_message(&mut self, ty: u16, args: Vec<Field>) -> Result<()> {
+        self.tx_id += 1;
+        let mut msg_buf = Vec::new();
+        Message::new(self.tx_id, ty, args)?.encode(&mut msg_buf)?;
+
+        self.stream.write_all(&msg_buf).await?;
+        Ok(())
     }
 
     // Using the framing patern from https://tokio.rs/tokio/tutorial/framing
-    async fn read_message(&mut self, stream: &mut TcpStream) -> Result<Message> {
+    async fn read_message(&mut self) -> Result<Message> {
         loop {
             // Parse a message that is already in the buffer.
             if let Some(msg) = self.parse_message()? {
@@ -151,7 +154,7 @@ impl MessageReader {
 
             // Read more data into the buffer if we don't have enough for a
             // message.
-            if 0 == stream.read_buf(&mut self.buf).await? {
+            if 0 == self.stream.read_buf(&mut self.buf).await? {
                 // The remote closed the connection. For this to be
                 // a clean shutdown, there should be no data in the
                 // read buffer. If there is, this means that the
