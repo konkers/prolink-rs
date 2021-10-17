@@ -253,6 +253,17 @@ impl Message {
         }
     }
 
+    pub fn arg_blob<'a>(&'a self, idx: usize) -> Result<&'a Vec<u8>> {
+        if idx >= self.args.len() {
+            return Err(anyhow!("index out of range").into());
+        }
+
+        match &self.args[idx] {
+            Field::Blob(val) => Ok(val),
+            _ => Err(anyhow!("wrong arg type").into()),
+        }
+    }
+
     pub fn encode(&self, mut w: impl Write) -> Result<()> {
         Field::U32(MESSAGE_MAGIC).encode(&mut w)?;
         Field::U32(self.tx_id).encode(&mut w)?;
@@ -295,7 +306,7 @@ impl Message {
     }
 }
 
-#[derive(Debug, Display, FromPrimitive)]
+#[derive(Debug, Display, FromPrimitive, PartialEq)]
 #[repr(u32)]
 pub(super) enum MenuItemType {
     Folder = 0x0001,

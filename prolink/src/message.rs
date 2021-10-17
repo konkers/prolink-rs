@@ -14,6 +14,7 @@ pub struct Track {
     pub track_type: u8,
     pub rekordbox_id: u32,
     pub metadata: HashMap<String, String>,
+    pub artwork: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -15,7 +15,7 @@ use tokio::{
     time::{self, Instant},
 };
 
-mod message;
+pub mod message;
 mod metadata;
 mod proto;
 
@@ -484,6 +484,7 @@ impl StatusTask {
             track_type: pkt.track_type,
             rekordbox_id: pkt.rekordbox_id,
             metadata: HashMap::new(),
+            artwork: None,
         };
 
         let new = if let Some(prev) = self.current_tracks.insert(pkt.device_num, track.clone()) {

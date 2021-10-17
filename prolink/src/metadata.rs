@@ -76,6 +76,7 @@ pub(crate) async fn get_metadata(
     )
     .await?;
 
+    let mut artwork_id = None;
     loop {
         let response = conn.read_message().await?;
 
@@ -88,7 +89,29 @@ pub(crate) async fn get_metadata(
             let val = response.arg_string(3)?;
             if let Some(item_type) = MenuItemType::from_u32(item_type_raw) {
                 track.metadata.insert(format!("{}", item_type), val.clone());
+                if item_type == MenuItemType::TrackTitle {
+                    let id = response.arg_u32(8)?;
+                    if id > 0 {
+                        artwork_id = Some(id);
+                    }
+                }
             }
+        }
+    }
+
+    if let Some(id) = artwork_id {
+        // Track Artwork
+        conn.send_message(
+            0x2003,
+            vec![
+                Field::dmst(our_device_num, 0x8, track.track_slot, track.track_type),
+                Field::U32(id),
+            ],
+        )
+        .await?;
+        let response = conn.read_message().await?;
+        if response.ty == 0x4002 && response.args.len() == 4 {
+            track.artwork = Some(response.arg_blob(3)?.clone());
         }
     }
 
