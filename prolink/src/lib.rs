@@ -493,7 +493,6 @@ impl StatusTask {
         };
 
         if new {
-            println!("{:x?}", pkt);
             if track.rekordbox_id != 0 {
                 let peer = self
                     .peers_rx

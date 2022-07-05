@@ -106,6 +106,7 @@ pub(crate) async fn get_metadata(
             vec![
                 Field::dmst(our_device_num, 0x8, track.track_slot, track.track_type),
                 Field::U32(id),
+                Field::U32(1),
             ],
         )
         .await?;

@@ -1,11 +1,15 @@
 [workspace]
 
 members = [
+    "nfs-util",
     "prolink",
+    "prolink-nfs",
     "prolink-util",
 ]
 
 default-members = [
+    "nfs-util",
     "prolink",
+    "prolink-nfs",
     "prolink-util",
 ]
