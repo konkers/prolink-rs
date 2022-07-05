@@ -363,6 +363,7 @@ pub struct PlayerStatusPacket {
     pub track_type: u8,
     pub rekordbox_id: u32,
     pub track_num: u16,
+    pub unknown_34: [u8; 3],
     pub d_l: u8,
     pub unknown_38: [u8; 14],
     pub d_n: u16,
@@ -420,12 +421,12 @@ impl PlayerStatusPacket {
         let (i, track_slot) = be_u8(i)?;
         let (i, track_type) = be_u8(i)?;
 
-        // 0x30
         let (i, _) = context("tag2", tag(&[0x00]))(i)?;
         let (i, rekordbox_id) = be_u32(i)?;
+        // 0x30
         let (i, _) = context("tag3", tag(&[0x00, 0x00]))(i)?;
         let (i, track_num) = be_u16(i)?;
-        let (i, _) = context("tag4", tag(&[0x00, 0x00, 0x00]))(i)?;
+        let (i, unknown_34) = take(3usize)(i)?;
         let (i, d_l) = be_u8(i)?;
 
         // 0x38
@@ -567,6 +568,7 @@ impl PlayerStatusPacket {
                 track_type,
                 rekordbox_id,
                 track_num,
+                unknown_34: (*unknown_34.fragment()).try_into().unwrap(),
                 d_l,
                 unknown_38: (*unknown_38.fragment()).try_into().unwrap(),
                 d_n,
@@ -1017,6 +1019,7 @@ mod tests {
                     track_type: 0x1,
                     rekordbox_id: 0x73,
                     track_num: 0x1,
+                    unknown_34: [0; 3],
                     d_l: 0x2,
                     unknown_38: [
                         0x0, 0x0, 0x0, 0x33, 0x0, 0x0, 0x0, 0x38, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
@@ -1149,6 +1152,7 @@ mod tests {
                     track_type: 0x1,
                     rekordbox_id: 0x73,
                     track_num: 0x1,
+                    unknown_34: [0; 3],
                     d_l: 0x2,
                     unknown_38: [
                         0x0, 0x0, 0x0, 0x33, 0x0, 0x0, 0x0, 0x38, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,

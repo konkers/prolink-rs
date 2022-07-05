@@ -1,24 +1,15 @@
 [package]
-name = "prolink"
+name = "prolink-nfs"
 version = "0.1.0"
-authors = ["Erik Gilling <konkers@konkers.net>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anyhow = "1.0"
-bytes = "1.1.0"
 byteorder = "1.4.3"
-mac_address = "1.1"
-network-interface = "0.1.1"
-nom = "7.0.0"
-nom_locate = "4.0.0"
-num-traits = "0.2"
-num-derive = "0.3"
+bytes = "1.1.0"
 pretty-hex = "0.2.1"
-strum = { version = "0.22", features = ["derive"] }
-thiserror = "1.0"
 tokio = { version = "1.12.0", features = ["full"] }
 xdr-codec = {path = "../../rust-xdr/xdr-codec"}
 
