@@ -5,7 +5,8 @@ use std::{
 };
 
 use anyhow::anyhow;
-use pnet::datalink;
+use mac_address::mac_address_by_name;
+use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig, V4IfAddr};
 use proto::KeepAlivePacket;
 use thiserror::Error;
 use tokio::{
@@ -57,6 +58,7 @@ pub type Result<T> = std::result::Result<T, ProlinkError>;
 pub struct Config {
     pub name: String,
     pub device_num: u8,
+    pub interface_name: Option<String>,
 }
 
 pub struct Prolink {
@@ -161,6 +163,17 @@ struct Membership {
     peers: HashMap<u8, Peer>,
 }
 
+fn ipv4_iface(iface: &NetworkInterface) -> Option<(String, V4IfAddr)> {
+    if let Some(addr) = iface.addr {
+        match addr {
+            Addr::V4(a) => Some((iface.name.clone(), a)),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
 impl Membership {
     async fn new(
         config: &Config,
@@ -168,20 +181,33 @@ impl Membership {
         peers_tx: watch::Sender<HashMap<u8, Peer>>,
         msg_tx: mpsc::Sender<Message>,
     ) -> Result<Membership> {
-        let interfaces = datalink::interfaces();
-        let interface = interfaces
-            .iter()
-            .find(|e| e.is_up() && !e.is_loopback() && !e.ips.is_empty() && !e.mac.is_none())
-            .ok_or(anyhow!("Can't find default interface"))?;
-        let mac_addr = interface.mac.unwrap().octets().clone();
-        let iface = interface.ips.iter().find(|e| e.is_ipv4()).unwrap();
-        let my_addr = SocketAddr::new(iface.ip(), 50000);
-        let ip_addr = match iface.ip() {
-            IpAddr::V4(ip) => ip.octets(),
-            _ => panic!("is_ipv4() is wrong"),
+        let all_interfaces =
+            NetworkInterface::show().map_err(|e| anyhow!("can't get network interfaces: {}", e))?;
+
+        let mut network_interfaces = all_interfaces.iter().filter_map(|iface| ipv4_iface(iface));
+
+        let (name, addr) = if let Some(iface_name) = &config.interface_name {
+            network_interfaces
+                .find(|(name, _)| name == iface_name)
+                .ok_or(anyhow!("Can't find interface \"{}\".", iface_name))?
+        } else {
+            network_interfaces
+                .next()
+                .ok_or(anyhow!("Can't find a default interface."))?
         };
 
-        let broadcast_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 50000);
+        let mac = mac_address_by_name(&name)
+            .map_err(|e| anyhow!("failed to look up mac address: {}", e))?
+            .ok_or(anyhow!("failed to look up mac address"))?;
+        let ip = IpAddr::V4(addr.ip);
+        let my_addr = SocketAddr::new(ip, 50000);
+        let ip_addr = addr.ip.octets();
+        let mac_addr = mac.bytes().clone();
+
+        let broadcast_addr = SocketAddr::new(
+            IpAddr::V4(addr.broadcast.ok_or(anyhow!("Can't get broacast addr"))?),
+            50000,
+        );
 
         let socket = UdpSocket::bind("0.0.0.0:50000").await?;
         socket.set_broadcast(true)?;
