@@ -16,6 +16,7 @@ use tokio::{
     time::{self, Instant},
 };
 
+mod database;
 pub mod message;
 mod metadata;
 mod proto;
