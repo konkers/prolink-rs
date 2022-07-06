@@ -72,6 +72,22 @@ impl Mount {
         }
     }
 
+    fn mount_list_to_vec(list: &Option<Box<xdr::ExportList>>, v: &mut Vec<String>) {
+        if let Some(ref m) = list {
+            let raw_path_u8 = m.fileSystem.0.clone();
+            if raw_path_u8.len() % 2 != 0 {
+                // XXX: log error
+                return;
+            }
+            let raw_path: Vec<u16> = raw_path_u8
+                .chunks(2)
+                .map(|b| (b[0] as u16) + ((b[1] as u16) << 8))
+                .collect();
+            let path = String::from_utf16_lossy(&raw_path);
+            v.push(path);
+            Self::mount_list_to_vec(&m.next, v);
+        }
+    }
     pub async fn exports(&mut self) -> Result<Vec<String>> {
         let mounts: xdr::ExportListRes = self
             .rpc
@@ -80,15 +96,7 @@ impl Mount {
 
         let mut exports = Vec::new();
 
-        let mut mount_list = mounts.next;
-
-        while mount_list.is_some() {
-            if let Some(m) = mount_list {
-                let raw_path = m.fileSystem.0;
-
-                mount_list = m.next;
-            }
-        }
+        Self::mount_list_to_vec(&mounts.next, &mut exports);
 
         Ok(exports)
     }
@@ -103,7 +111,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_loopkup() {
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 243));
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 35));
         let mut bind = Bind::connect(ip).await.unwrap();
         let port = bind
             .lookup(MOUNTPROG, MOUNTVER, Protocol::UDP)
