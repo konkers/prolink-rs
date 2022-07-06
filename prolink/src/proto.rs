@@ -711,7 +711,7 @@ impl Packet {
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?
                     .as_millis();
-                let path = format!("./bad-packet-{}.bin", timestamp);
+                let path = format!("./bad-packets/bad-packet-{}.bin", timestamp);
                 fs::write(&path, data)?;
                 match e {
                     nom::Err::Error(e) | nom::Err::Failure(e) => {
