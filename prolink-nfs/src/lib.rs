@@ -11,22 +11,29 @@ mod rpc;
 pub use anyhow::Result;
 use bind::Bind;
 use mount::Mount;
+use nfs::Nfs;
 
 type FileHandle = [u8; 32];
 
 pub struct NfsClient {
     mount: Mount,
+    nfs: Nfs,
     mounts: HashMap<String, FileHandle>,
 }
 
 impl NfsClient {
     pub async fn connect(ip: IpAddr) -> Result<NfsClient> {
         let mut bind = Bind::connect(ip).await?;
-        let port = Mount::lookup_port(&mut bind).await?;
-        let mount = Mount::connect(ip, port).await?;
+
+        let mount_port = Mount::lookup_port(&mut bind).await?;
+        let mount = Mount::connect(ip, mount_port).await?;
+
+        let nfs_port = Nfs::lookup_port(&mut bind).await?;
+        let nfs = Nfs::connect(ip, nfs_port).await?;
 
         Ok(NfsClient {
             mount,
+            nfs,
             mounts: HashMap::new(),
         })
     }
@@ -35,10 +42,11 @@ impl NfsClient {
         self.mount.exports().await
     }
 
-    async fn get_mount<'a>(mut self, path: &'a str) -> Result<(FileHandle, &'a str)> {
+    async fn get_mount<'a>(&mut self, path: &'a str) -> Result<(FileHandle, &'a str)> {
         for (mount_path, fh) in &self.mounts {
             if path.starts_with(mount_path) {
-                return Ok((fh.clone(), path.strip_prefix(mount_path).unwrap()));
+                let new_path = path.strip_prefix(mount_path).unwrap();
+                return Ok((fh.clone(), new_path));
             }
         }
 
@@ -58,6 +66,12 @@ impl NfsClient {
         }
 
         Err(anyhow!("Can't find export mount for {}", path))
+    }
+
+    pub async fn list_files(&mut self, path: &str) -> Result<Vec<String>> {
+        let (mount_handle, path) = self.get_mount(path).await?;
+        let dir_handle = self.nfs.lookup(&mount_handle, path).await?;
+        self.nfs.readdir(&dir_handle).await
     }
 }
 
