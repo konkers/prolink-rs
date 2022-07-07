@@ -16,11 +16,7 @@ nom = "7.0.0"
 nom_locate = "4.0.0"
 num-traits = "0.2"
 num-derive = "0.3"
-pretty-hex = "0.2.1"
-strum = { version = "0.22", features = ["derive"] }
+pretty-hex = "0.3"
+strum = { version = "0.24", features = ["derive"] }
 thiserror = "1.0"
 tokio = { version = "1.12.0", features = ["full"] }
-xdr-codec = {path = "../../rust-xdr/xdr-codec"}
-
-[build-dependencies]
-xdrgen = {path = "../../rust-xdr/xdrgen"}
