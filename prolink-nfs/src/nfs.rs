@@ -23,6 +23,8 @@ pub(super) mod xdr {
     include!(concat!(env!("OUT_DIR"), "/nfs_xdr.rs"));
 }
 
+pub use xdr::FAttr as Attributes;
+
 pub const NFSPROG: u32 = 100003;
 pub const NFSVER: u32 = 2;
 
@@ -62,6 +64,22 @@ impl Nfs {
         Ok(Nfs { rpc })
     }
 
+    pub async fn getattr(&mut self, file: &FileHandle) -> Result<Attributes> {
+        let res: xdr::AttrStat = self
+            .rpc
+            .call(
+                NFSPROG,
+                NFSVER,
+                NfsProc::GETATTR as u32,
+                &xdr::FHandle(*file),
+            )
+            .await?;
+
+        match res {
+            xdr::AttrStat::NFS_OK(attributes) => Ok(attributes),
+            _ => Err(anyhow!("NFS error on geterror")),
+        }
+    }
     pub async fn lookup(&mut self, mount: &FileHandle, path: &str) -> Result<FileHandle> {
         let path_vec: Vec<_> = path.encode_utf16().collect();
         let mut c = Cursor::new(Vec::<u8>::with_capacity(path_vec.len() * 2));
@@ -87,6 +105,33 @@ impl Nfs {
             _ => Err(anyhow!("can't look up dir")),
         }
     }
+
+    pub async fn read(&mut self, file: &FileHandle, offset: u32, data: &mut [u8]) -> Result<u32> {
+        let count = std::cmp::min(data.len(), xdr::MAXDATA as usize) as u32;
+        let res: xdr::ReadRes = self
+            .rpc
+            .call(
+                NFSPROG,
+                NFSVER,
+                NfsProc::READ as u32,
+                &xdr::ReadArgs {
+                    file: xdr::FHandle(*file),
+                    offset,
+                    count: count,
+                    totalcount: count,
+                },
+            )
+            .await?;
+        match res {
+            xdr::ReadRes::NFS_OK(body) => {
+                let read_size = body.data.0.len();
+                data[..read_size].copy_from_slice(&body.data.0);
+                Ok(read_size as u32)
+            }
+            _ => Err(anyhow!("NFS error on read")),
+        }
+    }
+
     fn dir_list_to_vec(list: &Option<Box<xdr::Entry>>, v: &mut Vec<String>) {
         if let Some(ref m) = list {
             let raw_path_u8 = m.name.0.clone();
@@ -103,6 +148,7 @@ impl Nfs {
             Self::dir_list_to_vec(&m.next, v);
         }
     }
+
     pub async fn readdir(&mut self, dir: &FileHandle) -> Result<Vec<String>> {
         let status: xdr::ReadDirRes = self
             .rpc

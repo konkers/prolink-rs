@@ -42,11 +42,11 @@ impl NfsClient {
         self.mount.exports().await
     }
 
-    async fn get_mount<'a>(&mut self, path: &'a str) -> Result<(FileHandle, &'a str)> {
+    async fn get_mount(&mut self, path: &str) -> Result<(FileHandle, String)> {
         for (mount_path, fh) in &self.mounts {
             if path.starts_with(mount_path) {
                 let new_path = path.strip_prefix(mount_path).unwrap();
-                return Ok((fh.clone(), new_path));
+                return Ok((fh.clone(), new_path.to_string()));
             }
         }
 
@@ -60,18 +60,40 @@ impl NfsClient {
                         .get(export_path)
                         .ok_or(anyhow!("Can't lookup just mounted filesystem"))?
                         .clone(),
-                    path.strip_prefix(export_path).unwrap(),
+                    path.strip_prefix(export_path).unwrap().to_string(),
                 ));
             }
         }
 
-        Err(anyhow!("Can't find export mount for {}", path))
+        Err(anyhow!("Can't find export mount for {}", path.clone()))
     }
 
     pub async fn list_files(&mut self, path: &str) -> Result<Vec<String>> {
         let (mount_handle, path) = self.get_mount(path).await?;
-        let dir_handle = self.nfs.lookup(&mount_handle, path).await?;
+        let dir_handle = self.nfs.lookup(&mount_handle, &path).await?;
         self.nfs.readdir(&dir_handle).await
+    }
+
+    pub async fn get_file(&mut self, path: &str) -> Result<Vec<u8>> {
+        let (mount_handle, path) = self.get_mount(path).await?;
+        let file_handle = self.nfs.lookup(&mount_handle, &path).await?;
+
+        let attributes = self.nfs.getattr(&file_handle).await?;
+        let file_size = attributes.size as usize;
+        let mut data = vec![0u8; file_size];
+
+        let mut cur_size = 0usize;
+
+        while cur_size < file_size {
+            let read_size = self
+                .nfs
+                .read(&file_handle, cur_size as u32, &mut data[cur_size..])
+                .await?;
+
+            cur_size += read_size as usize;
+        }
+
+        Ok(data)
     }
 }
 

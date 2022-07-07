@@ -36,7 +36,6 @@ pub(super) struct Rpc {
 impl Rpc {
     pub async fn connect<A: ToSocketAddrs + std::fmt::Debug>(addr: A) -> Result<Rpc> {
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
-
         let addrs: Vec<SocketAddr> = lookup_host(&addr).await?.collect();
         if addrs.len() == 0 {
             return Err(anyhow!("can't lookup {:?}", addr).into());
@@ -65,18 +64,16 @@ impl Rpc {
             .pack(&mut c)
             .map_err(|e| anyhow!("error encoding payload: {}", e))?;
 
-        println!("{}", pretty_hex(c.get_ref()));
         let buf = c.into_inner();
         let size = self.socket.send_to(&buf, &self.addr).await?;
         if size != buf.len() {
             return Err(anyhow!("Incomplete write").into());
         }
 
-        let mut buf = [0u8; 4096];
+        let mut buf = [0u8; 16 * 1024];
         let (len, _src) = self.socket.recv_from(&mut buf).await?;
         let mut c: Cursor<Vec<u8>> = Cursor::new(Vec::from(&buf[0..len]));
 
-        println!("{}", pretty_hex(c.get_ref()));
         let rpc_response: xdr::rpc_msg = xdr_codec::unpack(&mut c)
             .map_err(|e| anyhow!("error decoding rpc_msg response: {}", e))?;
 
@@ -100,9 +97,6 @@ impl Rpc {
                 return Err(anyhow!("unsucessful call: {:?}", reply).into());
             }
         }
-
-        println!("{:x}", c.position());
-        println!("{}", pretty_hex(c.get_ref()));
 
         let ret: R =
             xdr_codec::unpack(&mut c).map_err(|e| anyhow!("error decoding response: {}", e))?;
