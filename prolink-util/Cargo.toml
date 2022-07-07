@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0"
+http-types = "2.12.0"
 mac_address = "1.1.2"
 pnet = "0.28.0"
 prolink = {path = "../prolink"}

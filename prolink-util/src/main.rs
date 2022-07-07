@@ -3,9 +3,14 @@ use std::{borrow::Borrow, collections::HashMap};
 
 use anyhow::Result;
 
+use http_types::headers::HeaderValue;
 use prolink::{message::Track, Config, Message, Prolink};
 use serde::{Deserialize, Serialize};
-use tide::{prelude::*, sse, Request};
+use tide::{
+    prelude::*,
+    security::{CorsMiddleware, Origin},
+    sse, Request,
+};
 use tokio::{fs, sync::watch};
 
 #[derive(Clone, Debug, Serialize)]
@@ -94,7 +99,14 @@ impl ProlinkTask {
 
 async fn web(decks_rx: watch::Receiver<HashMap<u8, DeckInfo>>) -> Result<()> {
     tide::log::start();
+
     let mut app = tide::with_state(WebState { decks: decks_rx });
+    app.with(
+        CorsMiddleware::new()
+            .allow_methods("GET, POST, OPTIONS".parse::<HeaderValue>().unwrap())
+            .allow_origin(Origin::from("*"))
+            .allow_credentials(false),
+    );
     app.at("/decks")
         .get(sse::endpoint(|req: Request<WebState>, sender| async move {
             let mut state = req.state().clone();
