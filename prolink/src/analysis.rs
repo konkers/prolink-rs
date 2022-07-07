@@ -93,8 +93,6 @@ impl Analysis {
         ];
         let entry_size = be_u32(data, 0xc)? as usize;
         let num_entries = be_u16(data, 0x10)? as usize;
-        println!("entry_size {}", entry_size);
-        println!("num_entries {}", num_entries);
         let decoded_data: Vec<_> = data
             .iter()
             .enumerate()

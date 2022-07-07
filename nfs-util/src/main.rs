@@ -63,6 +63,8 @@ async fn get(remote_path: &str, local_path: &PathBuf) -> Result<()> {
 }
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
+
     let opt = Opt::from_args();
 
     match opt {

@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::anyhow;
+use log::{error, warn};
 use mac_address::mac_address_by_name;
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig, V4IfAddr};
 use proto::KeepAlivePacket;
@@ -80,7 +81,7 @@ impl Prolink {
 
         let join_handle = tokio::spawn(async move {
             if let Err(e) = membership.run().await {
-                println!("membership task error: {}", e);
+                error!(target: "prolink", "membership task error: {}", e);
             }
         });
 
@@ -107,7 +108,7 @@ impl Prolink {
 
         let status_handle = tokio::spawn(async move {
             if let Err(e) = status.run().await {
-                println!("status task error: {}", e);
+                error!(target: "prolink", "status task error: {}", e);
             }
         });
 
@@ -480,7 +481,7 @@ impl StatusTask {
                         let buf = &buf[0..len];
                         match  proto::Packet::parse(buf) {
                             Ok(pkt) => self.handle_packet(&pkt).await?,
-                            Err(e) => println!("{:x?}", e),
+                            Err(e) => warn!(target: "prolink", "error parsing packet {:x?}", e),
                         }
                     }
                 }

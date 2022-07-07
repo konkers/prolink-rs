@@ -123,6 +123,8 @@ async fn web(decks_rx: watch::Receiver<HashMap<u8, DeckInfo>>) -> Result<()> {
 }
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
+
     let (decks_tx, decks_rx) = watch::channel(HashMap::new());
 
     let _ = tokio::spawn(async move {

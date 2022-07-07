@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use log::info;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use std::{collections::HashMap, convert::TryInto, io::SeekFrom};
@@ -107,7 +108,7 @@ impl Database {
                     },
                 );
             } else {
-                println!("unknown table type: {}", raw_table_type);
+                info!(target: "database", "unknown table type: {}", raw_table_type);
             }
         }
 
