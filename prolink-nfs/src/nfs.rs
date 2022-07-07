@@ -1,13 +1,12 @@
+use anyhow::anyhow;
+use byteorder::{LittleEndian, WriteBytesExt};
 use std::{
     io::Cursor,
     net::{IpAddr, SocketAddr},
 };
 
-use anyhow::anyhow;
-use byteorder::{BigEndian, LittleEndian, WriteBytesExt};
-
 use super::bind::{self, Bind};
-use super::rpc::{NoneParam, Rpc};
+use super::rpc::Rpc;
 use super::FileHandle;
 use crate::Result;
 
@@ -29,6 +28,7 @@ pub const NFSPROG: u32 = 100003;
 pub const NFSVER: u32 = 2;
 
 #[repr(u32)]
+#[allow(dead_code, non_camel_case_types)]
 enum NfsProc {
     NULL = 0,
     GETATTR = 1,

@@ -1,9 +1,6 @@
 use anyhow::anyhow;
-use byteorder::{LittleEndian, ReadBytesExt};
-use nom::character::complete::tab;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
-use pretty_hex::*;
 use std::{collections::HashMap, convert::TryInto, io::SeekFrom};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 
@@ -36,43 +33,41 @@ pub struct TablePointer {
 
 #[derive(Debug)]
 pub struct RawAlbum {
-    artist_id: u32,
-    id: u32,
-    name: String,
+    pub artist_id: u32,
+    pub id: u32,
+    pub name: String,
 }
 
 #[derive(Debug)]
 pub struct RawTrack {
-    sample_rate: u32,
-    composer_id: u32,
-    file_size: u32,
-    artwork_id: u32,
-    key_id: u32,
-    org_artist_id: u32,
-    label_id: u32,
-    remixer_id: u32,
-    bitrate: u32,
-    track_number: u32,
-    tempo: u32,
-    genre_id: u32,
-    album_id: u32,
-    artist_id: u32,
-    id: u32,
-    disc: u16,
-    play_count: u16,
-    year: u16,
-    sample_depth: u16,
-    duration: u16,
-    color_id: u8,
-    rating: u8,
-    strings: Vec<String>,
+    pub sample_rate: u32,
+    pub composer_id: u32,
+    pub file_size: u32,
+    pub artwork_id: u32,
+    pub key_id: u32,
+    pub org_artist_id: u32,
+    pub label_id: u32,
+    pub remixer_id: u32,
+    pub bitrate: u32,
+    pub track_number: u32,
+    pub tempo: u32,
+    pub genre_id: u32,
+    pub album_id: u32,
+    pub artist_id: u32,
+    pub id: u32,
+    pub disc: u16,
+    pub play_count: u16,
+    pub year: u16,
+    pub sample_depth: u16,
+    pub duration: u16,
+    pub color_id: u8,
+    pub rating: u8,
+    pub strings: Vec<String>,
 }
 
 #[derive(Debug)]
 pub struct Database {
     page_size: usize,
-    num_tables: u32,
-    sequence: u32,
 
     albums: HashMap<u32, RawAlbum>,
     artists: HashMap<u32, String>,
@@ -85,12 +80,13 @@ pub struct Database {
 }
 
 impl Database {
+    #[allow(dead_code)]
     pub async fn parse<R: AsyncRead + AsyncSeek + Unpin>(r: &mut R) -> Result<Database> {
         r.seek(SeekFrom::Start(4)).await?;
         let page_size = r.read_u32_le().await? as usize;
         let num_tables = r.read_u32_le().await?;
         r.seek(SeekFrom::Current(8)).await?;
-        let sequence = r.read_u32_le().await?;
+        let _sequence = r.read_u32_le().await?;
         r.seek(SeekFrom::Current(4)).await?;
 
         let mut table_pointers = HashMap::new();
@@ -117,8 +113,6 @@ impl Database {
 
         let mut db = Database {
             page_size,
-            num_tables,
-            sequence,
             albums: HashMap::new(),
             artists: HashMap::new(),
             artwork: HashMap::new(),

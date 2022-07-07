@@ -20,6 +20,7 @@ const RPCBPROG: u32 = 100000;
 const RPCBVERS: u32 = 2;
 
 #[repr(u32)]
+#[allow(dead_code)]
 enum RpcbProg {
     NULL = 0,
     SET = 1,
@@ -31,6 +32,7 @@ enum RpcbProg {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
 pub(super) enum Protocol {
     TCP = xdr::IPPROTO_TCP as u32,
     UDP = xdr::IPPROTO_UDP as u32,
@@ -67,6 +69,7 @@ impl Bind {
         Ok(port as u16)
     }
 
+    #[allow(dead_code)]
     pub async fn list(&mut self) -> Result<Vec<Mapping>> {
         let mut entry: xdr::pmaplist_ptr = self
             .rpc

@@ -1,11 +1,8 @@
-use std::hash::Hash;
-use std::{borrow::Borrow, collections::HashMap};
-
 use anyhow::Result;
-
 use http_types::headers::HeaderValue;
 use prolink::{message::Track, Config, Message, Prolink};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use std::collections::HashMap;
 use tide::{
     prelude::*,
     security::{CorsMiddleware, Origin},

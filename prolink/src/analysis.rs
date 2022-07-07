@@ -1,8 +1,4 @@
-use std::{
-    convert::TryInto,
-    io::SeekFrom,
-    num::{self, Wrapping},
-};
+use std::{convert::TryInto, io::SeekFrom, num::Wrapping};
 
 use anyhow::anyhow;
 use num_derive::FromPrimitive;
@@ -31,39 +27,41 @@ pub enum Mood {
 
 #[derive(Debug)]
 pub struct PhraseId {
-    ty: PhraseType,
-    index: u8,
+    pub ty: PhraseType,
+    pub index: u8,
 }
 
 #[derive(Debug)]
 pub struct Phrase {
-    index: u16,
-    beats: Vec<u16>,
-    phrase_id: PhraseId,
-    fill_beats: u16,
+    pub index: u16,
+    pub beats: Vec<u16>,
+    pub phrase_id: PhraseId,
+    pub fill_beats: u16,
 }
 
 #[derive(Debug)]
 pub struct SongStructure {
-    mood: Mood,
-    end_beat: u16,
-    bank: u8,
-    phrases: Vec<Phrase>,
+    pub mood: Mood,
+    pub end_beat: u16,
+    pub bank: u8,
+    pub phrases: Vec<Phrase>,
 }
 
 #[derive(Debug)]
 pub struct Analysis {
-    structure: Option<SongStructure>,
+    pub structure: Option<SongStructure>,
 }
 
 impl Analysis {
+    #[allow(dead_code)]
     pub fn new() -> Analysis {
         Analysis { structure: None }
     }
 
+    #[allow(dead_code)]
     pub async fn parse<R: AsyncRead + AsyncSeek + Unpin>(&mut self, r: &mut R) -> Result<()> {
         r.seek(SeekFrom::Start(0)).await?;
-        let four_cc = r.read_u32().await?;
+        let _four_cc = r.read_u32().await?;
         let header_len = r.read_u32().await? as u64;
         let file_len = r.read_u32().await? as u64;
 
@@ -87,6 +85,7 @@ impl Analysis {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn parse_song_structure(&mut self, data: &[u8]) -> Result<()> {
         let mask = [
             0xCBu8, 0xE1, 0xEE, 0xFA, 0xE5, 0xEE, 0xAD, 0xEE, 0xE9, 0xD2, 0xE9, 0xEB, 0xE1, 0xE9,

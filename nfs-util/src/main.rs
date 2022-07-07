@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use prolink_nfs::NfsClient;
 use std::{
-    net::{IpAddr, Ipv4Addr, ToSocketAddrs},
+    net::{IpAddr, ToSocketAddrs},
     path::PathBuf,
 };
 use structopt::StructOpt;

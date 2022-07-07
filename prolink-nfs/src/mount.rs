@@ -1,10 +1,9 @@
+use anyhow::anyhow;
+use byteorder::{LittleEndian, WriteBytesExt};
 use std::{
     io::Cursor,
     net::{IpAddr, SocketAddr},
 };
-
-use anyhow::anyhow;
-use byteorder::{BigEndian, LittleEndian, WriteBytesExt};
 
 use super::bind::{self, Bind};
 use super::rpc::{NoneParam, Rpc};
@@ -27,6 +26,7 @@ pub const MOUNTPROG: u32 = 100005;
 pub const MOUNTVER: u32 = 1;
 
 #[repr(u32)]
+#[allow(dead_code)]
 pub enum MountProc {
     NULL = 0,
     MNT = 1,
@@ -112,15 +112,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_loopkup() {
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 35));
-        let mut bind = Bind::connect(ip).await.unwrap();
-        let port = bind
-            .lookup(MOUNTPROG, MOUNTVER, Protocol::UDP)
-            .await
-            .unwrap();
-        println!("{:?}", port);
-        let mut mount = Mount::connect(ip, port).await.unwrap();
-        let list = mount.exports().await.ok();
-        let list = mount.mount("/C/").await.unwrap();
+        if false {
+            let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 35));
+            let mut bind = Bind::connect(ip).await.unwrap();
+            let port = bind
+                .lookup(MOUNTPROG, MOUNTVER, Protocol::UDP)
+                .await
+                .unwrap();
+            println!("{:?}", port);
+            let mut mount = Mount::connect(ip, port).await.unwrap();
+            mount.exports().await.ok();
+            mount.mount("/C/").await.unwrap();
+        }
     }
 }

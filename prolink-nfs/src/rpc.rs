@@ -1,9 +1,8 @@
 use std::{io::Cursor, net::SocketAddr};
 
 use anyhow::anyhow;
-use pretty_hex::pretty_hex;
 use tokio::net::{lookup_host, ToSocketAddrs, UdpSocket};
-use xdr_codec::{Pack, Write};
+use xdr_codec::Pack;
 
 use crate::Result;
 
@@ -20,7 +19,7 @@ pub(super) mod xdr {
 
 pub(super) struct NoneParam {}
 impl<Out: xdr_codec::Write> Pack<Out> for NoneParam {
-    fn pack(&self, out: &mut Out) -> xdr_codec::Result<usize> {
+    fn pack(&self, _: &mut Out) -> xdr_codec::Result<usize> {
         Ok(0usize)
     }
 }
@@ -59,7 +58,7 @@ impl Rpc {
         payload: &P,
     ) -> Result<R> {
         let mut c: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        let xid = self.encode_rpc(&mut c, prog, vers, proc)?;
+        let _xid = self.encode_rpc(&mut c, prog, vers, proc)?;
         payload
             .pack(&mut c)
             .map_err(|e| anyhow!("error encoding payload: {}", e))?;
