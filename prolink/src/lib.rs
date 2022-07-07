@@ -487,7 +487,6 @@ impl StatusTask {
     }
 
     async fn handle_packet(&mut self, pkt: &proto::Packet) -> Result<()> {
-        //println!("{:x?}", &pkt);
         match &pkt {
             &proto::Packet::PlayerStatus(status) => {
                 self.handle_player_status_packet(&status).await?
@@ -520,14 +519,14 @@ impl StatusTask {
         };
 
         if new {
-            let peer = self
-                .peers_rx
-                .borrow()
-                .get(&track.player_device)
-                .ok_or(anyhow!("unable to look up peer: {}", track.player_device))?
-                .clone();
-
             if track.rekordbox_id != 0 {
+                let peer = self
+                    .peers_rx
+                    .borrow()
+                    .get(&track.track_device)
+                    .ok_or(anyhow!("unable to look up peer: {}", track.track_device))?
+                    .clone();
+
                 let msg_tx = self.msg_tx.clone();
                 let dev_num = self.config.device_num;
                 tokio::spawn(async move {
