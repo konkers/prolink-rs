@@ -48,7 +48,6 @@ impl ProlinkTask {
     }
 
     async fn run(mut self) -> Result<()> {
-        self.prolink.run().await?;
         loop {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
@@ -95,7 +94,7 @@ impl ProlinkTask {
 }
 
 async fn web(decks_rx: watch::Receiver<HashMap<u8, DeckInfo>>) -> Result<()> {
-    tide::log::start();
+    //tide::log::start();
 
     let mut app = tide::with_state(WebState { decks: decks_rx });
     app.with(

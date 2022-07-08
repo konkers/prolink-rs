@@ -5,14 +5,14 @@ use std::{
 };
 
 use anyhow::anyhow;
-use log::{error, warn};
+use log::{debug, error, info, warn};
 use mac_address::mac_address_by_name;
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig, V4IfAddr};
 use proto::KeepAlivePacket;
 use thiserror::Error;
 use tokio::{
     net::UdpSocket,
-    sync::{mpsc, watch},
+    sync::{broadcast, mpsc, watch},
     task::JoinHandle,
     time::{self, Instant},
 };
@@ -24,6 +24,31 @@ mod metadata;
 mod proto;
 
 pub use message::Message;
+
+#[derive(Clone, Debug)]
+struct Peer {
+    name: String,
+    device_num: u8,
+    mac_addr: [u8; 6],
+    ip_addr: [u8; 4],
+    proto_ver: u8,
+    last_seen: Instant,
+}
+
+impl Peer {
+    fn is_same(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.mac_addr == other.mac_addr
+            && self.ip_addr == other.ip_addr
+            && self.proto_ver == other.proto_ver
+    }
+}
+
+#[derive(Debug, Clone)]
+enum PeerEvent {
+    Joined(Peer),
+    Left(Peer),
+}
 
 #[derive(Error, Debug)]
 pub enum ProlinkError {
@@ -65,20 +90,28 @@ pub struct Config {
 }
 
 pub struct Prolink {
-    config: Config,
     child_tasks: Vec<JoinHandle<()>>,
     msg_rx: mpsc::Receiver<Message>,
-    msg_tx: mpsc::Sender<Message>,
-    peers_rx: watch::Receiver<HashMap<u8, Peer>>,
 }
 
 impl Prolink {
     pub async fn join(config: Config) -> Result<Prolink> {
         let (msg_tx, msg_rx) = mpsc::channel(256);
         let (joined_tx, mut joined_rx) = watch::channel(false);
-        let (peers_tx, peers_rx) = watch::channel(HashMap::new());
-        let mut membership = Membership::new(&config, joined_tx, peers_tx, msg_tx.clone()).await?;
+        let (peers_tx, peers_rx) = broadcast::channel(64);
+        let mut membership =
+            Membership::new(&config, joined_tx, peers_tx.clone(), msg_tx.clone()).await?;
 
+        let status = StatusTask::new(&config, peers_rx, msg_tx.clone()).await?;
+
+        let status_handle = tokio::spawn(async move {
+            if let Err(e) = status.run().await {
+                error!(target: "prolink", "status task error: {}", e);
+            }
+        });
+
+        // Membership task needs to be run last so that other tasks don't miss
+        // membership events.
         let join_handle = tokio::spawn(async move {
             if let Err(e) = membership.run().await {
                 error!(target: "prolink", "membership task error: {}", e);
@@ -90,31 +123,9 @@ impl Prolink {
         }
 
         Ok(Prolink {
-            config,
-            child_tasks: vec![join_handle],
+            child_tasks: vec![join_handle, status_handle],
             msg_rx,
-            msg_tx,
-            peers_rx,
         })
-    }
-
-    pub async fn run(&mut self) -> Result<()> {
-        let status = StatusTask::new(
-            &self.config.clone(),
-            self.peers_rx.clone(),
-            self.msg_tx.clone(),
-        )
-        .await?;
-
-        let status_handle = tokio::spawn(async move {
-            if let Err(e) = status.run().await {
-                error!(target: "prolink", "status task error: {}", e);
-            }
-        });
-
-        self.child_tasks.push(status_handle);
-
-        Ok(())
     }
 
     pub async fn next(&mut self) -> Result<Message> {
@@ -134,29 +145,10 @@ impl Prolink {
     }
 }
 
-#[derive(Clone, Debug)]
-struct Peer {
-    name: String,
-    device_num: u8,
-    mac_addr: [u8; 6],
-    ip_addr: [u8; 4],
-    proto_ver: u8,
-    last_seen: Instant,
-}
-
-impl Peer {
-    fn is_same(&self, other: &Self) -> bool {
-        self.name == other.name
-            && self.mac_addr == other.mac_addr
-            && self.ip_addr == other.ip_addr
-            && self.proto_ver == other.proto_ver
-    }
-}
-
 struct Membership {
     config: Config,
     joined_tx: watch::Sender<bool>,
-    peers_tx: watch::Sender<HashMap<u8, Peer>>,
+    peers_tx: broadcast::Sender<PeerEvent>,
     msg_tx: mpsc::Sender<Message>,
     socket: UdpSocket,
     my_addr: SocketAddr,
@@ -181,7 +173,7 @@ impl Membership {
     async fn new(
         config: &Config,
         joined_tx: watch::Sender<bool>,
-        peers_tx: watch::Sender<HashMap<u8, Peer>>,
+        peers_tx: broadcast::Sender<PeerEvent>,
         msg_tx: mpsc::Sender<Message>,
     ) -> Result<Membership> {
         let all_interfaces =
@@ -241,19 +233,17 @@ impl Membership {
             .collect();
         for id in &timed_out_peers {
             if let Some(peer) = self.peers.remove(&id) {
+                info!("Peer left {:?}", &peer);
                 self.msg_tx
                     .send(Message::PeerLeft(message::Peer {
-                        name: peer.name,
+                        name: peer.name.clone(),
                         device_num: peer.device_num,
                     }))
                     .await?;
+                self.peers_tx
+                    .send(PeerEvent::Left(peer))
+                    .map_err(|e| anyhow!("Failed to send peer left event: {}", e))?;
             }
-        }
-
-        if timed_out_peers.len() > 0 {
-            self.peers_tx
-                .send(self.peers.clone())
-                .map_err(|e| anyhow!("failed to send new peers list: {}", e))?;
         }
 
         Ok(())
@@ -416,12 +406,16 @@ impl Membership {
 
         if let Some(prev) = self.peers.insert(ka.device_num, peer.clone()) {
             if !prev.is_same(&peer) {
+                info!("Peer left {:?}", &prev);
                 self.msg_tx
                     .send(Message::PeerLeft(message::Peer {
-                        name: prev.name,
+                        name: prev.name.clone(),
                         device_num: prev.device_num,
                     }))
                     .await?;
+                self.peers_tx
+                    .send(PeerEvent::Left(prev))
+                    .map_err(|e| anyhow!("Failed to send peer left event: {}", e))?;
                 new = true
             }
         } else {
@@ -429,16 +423,16 @@ impl Membership {
         }
 
         if new {
+            info!("Peer joined {:?}", &peer);
             self.msg_tx
                 .send(Message::PeerJoined(message::Peer {
-                    name: peer.name,
+                    name: peer.name.clone(),
                     device_num: peer.device_num,
                 }))
                 .await?;
-
             self.peers_tx
-                .send(self.peers.clone())
-                .map_err(|e| anyhow!("failed to send new peers list: {}", e))?;
+                .send(PeerEvent::Joined(peer))
+                .map_err(|e| anyhow!("Failed to send peer joined event: {}", e))?;
         }
 
         Ok(())
@@ -448,15 +442,17 @@ impl Membership {
 struct StatusTask {
     config: Config,
     socket: UdpSocket,
-    peers_rx: watch::Receiver<HashMap<u8, Peer>>,
+    peers_rx: broadcast::Receiver<PeerEvent>,
     msg_tx: mpsc::Sender<Message>,
     current_tracks: HashMap<u8, message::Track>,
+
+    peers: HashMap<u8, Peer>,
 }
 
 impl StatusTask {
     async fn new(
         config: &Config,
-        peers_rx: watch::Receiver<HashMap<u8, Peer>>,
+        peers_rx: broadcast::Receiver<PeerEvent>,
         msg_tx: mpsc::Sender<Message>,
     ) -> Result<StatusTask> {
         let socket = UdpSocket::bind("0.0.0.0:50002").await?;
@@ -466,6 +462,7 @@ impl StatusTask {
             peers_rx,
             msg_tx,
             current_tracks: HashMap::new(),
+            peers: HashMap::new(),
         })
     }
 
@@ -476,12 +473,21 @@ impl StatusTask {
                 _ = self.msg_tx.closed() => {
                     return Ok(())
                 }
+                res = self.peers_rx.recv() => {
+                    if let Ok(event) = res {
+                        info!("peer event {:?}", &event);
+                        match event {
+                            PeerEvent::Joined(peer) => {self.peers.insert(peer.device_num, peer);}
+                            PeerEvent::Left(peer) => {self.peers.remove(&peer.device_num);}
+                        }
+                    }
+                }
                 res = self.socket.recv_from(&mut buf) => {
                     if let Ok((len, _src)) = res {
                         let buf = &buf[0..len];
                         match  proto::Packet::parse(buf) {
                             Ok(pkt) => self.handle_packet(&pkt).await?,
-                            Err(e) => warn!(target: "prolink", "error parsing packet {:x?}", e),
+                            Err(e) => debug!(target: "prolink", "error parsing packet {:x?}", e),
                         }
                     }
                 }
@@ -501,7 +507,11 @@ impl StatusTask {
 
     async fn handle_player_status_packet(&mut self, pkt: &proto::PlayerStatusPacket) -> Result<()> {
         // Ignore packets form unknown peers
-        if !self.peers_rx.borrow().contains_key(&pkt.device_num) {
+        if !self.peers.contains_key(&pkt.device_num) {
+            warn!(
+                "got player status packet from unknown player {}",
+                pkt.device_num
+            );
             return Ok(());
         }
 
@@ -524,8 +534,7 @@ impl StatusTask {
         if new {
             if track.rekordbox_id != 0 {
                 let peer = self
-                    .peers_rx
-                    .borrow()
+                    .peers
                     .get(&track.track_device)
                     .ok_or(anyhow!("unable to look up peer: {}", track.track_device))?
                     .clone();
