@@ -1,7 +1,8 @@
 use anyhow::anyhow;
-use log::info;
+use log::{info, trace};
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
+use pretty_hex::PrettyHex;
 use std::{collections::HashMap, convert::TryInto, io::SeekFrom};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 
@@ -46,7 +47,7 @@ pub struct RawTrack {
     pub file_size: u32,
     pub artwork_id: u32,
     pub key_id: u32,
-    pub org_artist_id: u32,
+    pub original_artist_id: u32,
     pub label_id: u32,
     pub remixer_id: u32,
     pub bitrate: u32,
@@ -70,14 +71,14 @@ pub struct RawTrack {
 pub struct Database {
     page_size: usize,
 
-    albums: HashMap<u32, RawAlbum>,
-    artists: HashMap<u32, String>,
-    artwork: HashMap<u32, String>,
-    colors: HashMap<u32, String>,
-    generes: HashMap<u32, String>,
-    keys: HashMap<u32, String>,
-    labels: HashMap<u32, String>,
-    tracks: HashMap<u32, RawTrack>,
+    pub albums: HashMap<u32, RawAlbum>,
+    pub artists: HashMap<u32, String>,
+    pub artwork: HashMap<u32, String>,
+    pub colors: HashMap<u32, String>,
+    pub generes: HashMap<u32, String>,
+    pub keys: HashMap<u32, String>,
+    pub labels: HashMap<u32, String>,
+    pub tracks: HashMap<u32, RawTrack>,
 }
 
 impl Database {
@@ -156,10 +157,12 @@ impl Database {
     }
 
     fn parse_page(&mut self, table_type: &TableType, page_data: &Vec<u8>) -> Result<u32> {
+        trace!("{:?}", page_data.hex_dump());
         let next_page = le_u32(page_data, 0xc)?;
 
         let page_flags = page_data[0x1b];
         if (page_flags & 0x40) != 0 {
+            trace!("strange page");
             return Ok(next_page);
         }
 
@@ -171,18 +174,29 @@ impl Database {
             std::cmp::max(num_rows_large as usize, num_rows_small as usize)
         };
 
+        trace!("rows {}", num_rows);
         for i in 0..num_rows {
             let group = i / 16;
             let sub_index = i % 16;
-            let group_offset = page_data.len() - group * 18;
+            let group_offset = page_data.len() - group * 18 * 2;
             let valid_mask = le_u16(page_data, group_offset - 4)?;
+            trace!(
+                "parsing row {} {} {} {} {:x}",
+                i,
+                group,
+                sub_index,
+                group_offset,
+                valid_mask
+            );
 
             // Skip this row if it's not valid.
             if (valid_mask & (1 << sub_index)) == 0 {
+                trace!("invalid_row");
                 continue;
             }
 
             let row_offset = 0x28 + le_u16(page_data, group_offset - 6 - 2 * sub_index)? as usize;
+            trace!("row_offset {}", row_offset);
 
             self.parse_row(table_type, &page_data[row_offset..])?;
         }
@@ -191,6 +205,7 @@ impl Database {
     }
 
     fn parse_row(&mut self, table_type: &TableType, row_data: &[u8]) -> Result<()> {
+        trace!("parse row");
         match table_type {
             TableType::Albums => self.parse_album_row(row_data),
             TableType::Artists => self.parse_artist_row(row_data),
@@ -205,6 +220,7 @@ impl Database {
     }
 
     fn parse_album_row(&mut self, row_data: &[u8]) -> Result<()> {
+        trace!("parse album row");
         let artist_id = le_u32(row_data, 0x8)?;
         let id = le_u32(row_data, 0xc)?;
         let offset = row_data[0x15] as usize;
@@ -223,6 +239,7 @@ impl Database {
     }
 
     fn parse_artist_row(&mut self, row_data: &[u8]) -> Result<()> {
+        trace!("parse artist row");
         let sub_type = row_data[0];
         let id = le_u32(row_data, 4)?;
         let offset = match sub_type {
@@ -239,6 +256,7 @@ impl Database {
     }
 
     fn parse_artwork_row(&mut self, row_data: &[u8]) -> Result<()> {
+        trace!("parse artwork row");
         let id = le_u32(row_data, 0x0)?;
         let string = Self::parse_string(&row_data[4..])?;
         self.artwork.insert(id, string);
@@ -247,6 +265,7 @@ impl Database {
     }
 
     fn parse_color_row(&mut self, row_data: &[u8]) -> Result<()> {
+        trace!("parse color row");
         let id = le_u16(row_data, 0x5)? as u32;
         let string = Self::parse_string(&row_data[8..])?;
         self.colors.insert(id, string);
@@ -255,6 +274,7 @@ impl Database {
     }
 
     fn parse_genere_row(&mut self, row_data: &[u8]) -> Result<()> {
+        trace!("parse genere row");
         let id = le_u32(row_data, 0x0)? as u32;
         let string = Self::parse_string(&row_data[4..])?;
         self.generes.insert(id, string);
@@ -263,6 +283,7 @@ impl Database {
     }
 
     fn parse_key_row(&mut self, row_data: &[u8]) -> Result<()> {
+        trace!("parse key row");
         let id = le_u32(row_data, 0x0)? as u32;
         let string = Self::parse_string(&row_data[8..])?;
         self.keys.insert(id, string);
@@ -271,6 +292,7 @@ impl Database {
     }
 
     fn parse_label_row(&mut self, row_data: &[u8]) -> Result<()> {
+        trace!("parse lable row");
         let id = le_u32(row_data, 0x0)? as u32;
         let string = Self::parse_string(&row_data[4..])?;
         self.labels.insert(id, string);
@@ -279,12 +301,13 @@ impl Database {
     }
 
     fn parse_track_row(&mut self, row_data: &[u8]) -> Result<()> {
+        trace!("parse track row");
         let sample_rate = le_u32(row_data, 0x08)?;
         let composer_id = le_u32(row_data, 0x0c)?;
         let file_size = le_u32(row_data, 0x10)?;
         let artwork_id = le_u32(row_data, 0x1c)?;
         let key_id = le_u32(row_data, 0x20)?;
-        let org_artist_id = le_u32(row_data, 0x24)?;
+        let original_artist_id = le_u32(row_data, 0x24)?;
         let label_id = le_u32(row_data, 0x28)?;
         let remixer_id = le_u32(row_data, 0x2c)?;
         let bitrate = le_u32(row_data, 0x30)?;
@@ -317,7 +340,7 @@ impl Database {
                 file_size,
                 artwork_id,
                 key_id,
-                org_artist_id,
+                original_artist_id,
                 label_id,
                 remixer_id,
                 bitrate,
@@ -344,13 +367,15 @@ impl Database {
     fn parse_string(data: &[u8]) -> Result<String> {
         let flags = data[0];
 
-        if flags == 0x90 {
+        if flags == 0x90 && data.len() > 4 && data[4] == 0x3 {
             // ISRC string
             let len = le_u16(data, 1)? as usize;
             if len < 6 {
                 return Ok("".to_string());
             }
-            Ok(String::from_utf8(data[5..(len - 1)].into())
+            let str_data = &data[5..(len - 1)];
+            trace!("ISRC parsing utf8 {:x?}", str_data);
+            Ok(String::from_utf8(str_data.into())
                 .map_err(|e| anyhow!("Error converting ASCII string: {}", e))?)
         } else if (flags & 0x1) == 0 {
             let len = le_u16(data, 1)? as usize;
@@ -373,7 +398,9 @@ impl Database {
             if len < 2 {
                 return Ok("".to_string());
             }
-            Ok(String::from_utf8(data[1..len].into())
+            let str_data = &data[1..len];
+            trace!("parsing utf8 {:x?}", str_data);
+            Ok(String::from_utf8(str_data.into())
                 .map_err(|e| anyhow!("Error converting ASCII string: {}", e))?)
         }
     }
@@ -401,6 +428,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_database_load() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let reader = tokio::fs::File::open("src/test-data/export.pdb")
             .await
             .unwrap();
