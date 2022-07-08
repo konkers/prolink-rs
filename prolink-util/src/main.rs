@@ -1,6 +1,9 @@
 use anyhow::Result;
 use http_types::headers::HeaderValue;
-use prolink::{message::Track, Config, Message, Prolink};
+use prolink::{
+    message::{Track, TrackMetadata},
+    Config, Message, Prolink,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 use tide::{
@@ -12,7 +15,7 @@ use tokio::{fs, sync::watch};
 
 #[derive(Clone, Debug, Serialize)]
 struct DeckInfo {
-    attrs: HashMap<String, String>,
+    metadata: Option<TrackMetadata>,
     artwork: Option<String>,
 }
 
@@ -68,8 +71,8 @@ impl ProlinkTask {
         Ok(())
     }
     async fn handle_new_track(&mut self, t: &Track) -> Result<()> {
-        let mut info = DeckInfo {
-            attrs: t.metadata.clone(),
+        let mut deck_info = DeckInfo {
+            metadata: t.metadata.clone(),
             artwork: None,
         };
         if let Some(artwork) = &t.artwork {
@@ -83,10 +86,10 @@ impl ProlinkTask {
             let filename = format!("artwork-{}{}", t.rekordbox_id, suffix);
             let path = format!("./art/{}", filename);
             fs::write(&path, artwork).await?;
-            info.artwork = Some(format!("/art/{}", filename));
+            deck_info.artwork = Some(format!("/art/{}", filename));
         }
 
-        self.decks.insert(t.player_device, info);
+        self.decks.insert(t.player_device, deck_info);
         self.decks_tx.send(self.decks.clone())?;
 
         Ok(())

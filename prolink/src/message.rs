@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+pub use crate::tasks::metadata::TrackMetadata;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Peer {
     pub name: String,
@@ -13,7 +12,7 @@ pub struct Track {
     pub track_slot: u8,
     pub track_type: u8,
     pub rekordbox_id: u32,
-    pub metadata: HashMap<String, String>,
+    pub metadata: Option<TrackMetadata>,
     pub artwork: Option<Vec<u8>>,
 }
 

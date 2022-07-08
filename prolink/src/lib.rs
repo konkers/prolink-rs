@@ -10,13 +10,14 @@ use tokio::{
 mod analysis;
 mod database;
 pub mod message;
-mod metadata;
+//mod metadata;
 mod proto;
 mod tasks;
 
-use tasks::{membership::MembershipTask, status::StatusTask};
+use tasks::{membership::MembershipTask, metadata::MetadataTask, status::StatusTask};
 
 pub use message::Message;
+pub use tasks::metadata::TrackMetadata;
 
 #[derive(Clone, Debug)]
 struct Peer {
@@ -95,7 +96,15 @@ impl Prolink {
         let mut membership =
             MembershipTask::new(&config, joined_tx, peers_tx.clone(), msg_tx.clone()).await?;
 
-        let status = StatusTask::new(&config, peers_rx, msg_tx.clone()).await?;
+        let metadata = MetadataTask::new(peers_rx, msg_tx.clone());
+        let status =
+            StatusTask::new(peers_tx.subscribe(), msg_tx.clone(), metadata.client()).await?;
+
+        let metadata_handle = tokio::spawn(async move {
+            if let Err(e) = metadata.run().await {
+                error!(target: "prolink", "metadata task error: {}", e);
+            }
+        });
 
         let status_handle = tokio::spawn(async move {
             if let Err(e) = status.run().await {
@@ -116,7 +125,7 @@ impl Prolink {
         }
 
         Ok(Prolink {
-            child_tasks: vec![join_handle, status_handle],
+            child_tasks: vec![join_handle, status_handle, metadata_handle],
             msg_rx,
         })
     }

@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use log::{debug, info, warn};
 use std::collections::HashMap;
 use tokio::{
@@ -6,13 +5,13 @@ use tokio::{
     sync::{broadcast, mpsc},
 };
 
-use crate::{message, metadata, proto, Config, Message, Peer, PeerEvent, Result};
+use crate::{message, proto, tasks::metadata::MetadataClient, Message, Peer, PeerEvent, Result};
 
 pub(crate) struct StatusTask {
-    config: Config,
     socket: UdpSocket,
     peers_rx: broadcast::Receiver<PeerEvent>,
     msg_tx: mpsc::Sender<Message>,
+    metadata: MetadataClient,
     current_tracks: HashMap<u8, message::Track>,
 
     peers: HashMap<u8, Peer>,
@@ -20,16 +19,16 @@ pub(crate) struct StatusTask {
 
 impl StatusTask {
     pub(crate) async fn new(
-        config: &Config,
         peers_rx: broadcast::Receiver<PeerEvent>,
         msg_tx: mpsc::Sender<Message>,
+        metadata: MetadataClient,
     ) -> Result<StatusTask> {
         let socket = UdpSocket::bind("0.0.0.0:50002").await?;
         Ok(StatusTask {
-            config: config.clone(),
             socket,
             peers_rx,
             msg_tx,
+            metadata,
             current_tracks: HashMap::new(),
             peers: HashMap::new(),
         })
@@ -90,28 +89,26 @@ impl StatusTask {
             track_slot: pkt.track_slot,
             track_type: pkt.track_type,
             rekordbox_id: pkt.rekordbox_id,
-            metadata: HashMap::new(),
+            metadata: None,
             artwork: None,
         };
 
-        let new = if let Some(prev) = self.current_tracks.insert(pkt.device_num, track.clone()) {
-            prev != track
-        } else {
-            true
-        };
+        let new_track =
+            if let Some(prev) = self.current_tracks.insert(pkt.device_num, track.clone()) {
+                prev != track
+            } else {
+                true
+            };
 
-        if new {
+        if new_track {
             if track.rekordbox_id != 0 {
-                let peer = self
-                    .peers
-                    .get(&track.track_device)
-                    .ok_or(anyhow!("unable to look up peer: {}", track.track_device))?
-                    .clone();
-
                 let msg_tx = self.msg_tx.clone();
-                let dev_num = self.config.device_num;
+                self.metadata
+                    .lookup(pkt.track_device, pkt.track_slot, pkt.rekordbox_id)
+                    .await?;
+                let client = self.metadata.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = Self::fecth_metadata(dev_num, peer, track, msg_tx).await {
+                    if let Err(e) = Self::fecth_metadata(client, track, msg_tx).await {
                         println!("metadata fetch failed: {}", e);
                     }
                 });
@@ -123,13 +120,15 @@ impl StatusTask {
     }
 
     async fn fecth_metadata(
-        our_device_num: u8,
-        peer: Peer,
+        client: MetadataClient,
         mut track: message::Track,
         msg_tx: mpsc::Sender<Message>,
     ) -> Result<()> {
-        let port = metadata::get_metadata_port(&peer.ip_addr).await?;
-        metadata::get_metadata(our_device_num, &mut track, &peer.ip_addr, port).await?;
+        let info = client
+            .lookup(track.track_device, track.track_slot, track.rekordbox_id)
+            .await?;
+        track.metadata = Some(info.metadata);
+        track.artwork = info.artwork;
         msg_tx.send(Message::NewTrack(track)).await?;
         Ok(())
     }
