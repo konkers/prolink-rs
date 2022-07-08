@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use log::{info, warn};
+use log::{debug, info};
 use prolink_nfs::NfsClient;
 use serde::Serialize;
 use std::{
@@ -177,13 +177,7 @@ impl MetadataTask {
         let artwork = match db.artwork.get(&track.artwork_id) {
             Some(path) => {
                 let path = Self::slot_prefix(request.slot)?.to_owned() + path;
-                match client.get_file(&path).await {
-                    Ok(data) => Some(data),
-                    Err(e) => {
-                        warn!("Failed to fetch artwork at {}: {}", path, e);
-                        None
-                    }
-                }
+                Self::fetch_artwork(client, &path).await
             }
             None => None,
         };
@@ -232,6 +226,33 @@ impl MetadataTask {
         let db = Database::parse(&mut c).await?;
         info!("database loaded");
         Ok(db)
+    }
+
+    async fn fetch_artwork(client: &mut NfsClient, path: &str) -> Option<Vec<u8>> {
+        // First try to fetch high res art.
+        if let Some(data) = Self::fetch_hi_res_artwork(client, path).await {
+            return Some(data);
+        }
+
+        // If that fails, look for low res art.
+        match client.get_file(path).await {
+            Ok(data) => Some(data),
+            Err(e) => {
+                info!("Failed to fetch artwork at {}: {}", path, e);
+                None
+            }
+        }
+    }
+    async fn fetch_hi_res_artwork(client: &mut NfsClient, path: &str) -> Option<Vec<u8>> {
+        let (base, ext) = path.rsplit_once(".")?;
+        let path = base.to_owned() + "_m" + "." + ext;
+        match client.get_file(&path).await {
+            Ok(data) => Some(data),
+            Err(e) => {
+                debug!("Failed to fetch hi res artwork at {}: {}", path, e);
+                None
+            }
+        }
     }
 
     fn slot_prefix(slot: u8) -> Result<&'static str> {
