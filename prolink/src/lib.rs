@@ -14,7 +14,9 @@ pub mod message;
 mod proto;
 mod tasks;
 
-use tasks::{membership::MembershipTask, metadata::MetadataTask, status::StatusTask};
+use tasks::{
+    beat::BeatTask, membership::MembershipTask, metadata::MetadataTask, status::StatusTask,
+};
 
 pub use message::Message;
 pub use tasks::metadata::TrackMetadata;
@@ -99,6 +101,7 @@ impl Prolink {
         let metadata = MetadataTask::new(peers_rx, msg_tx.clone());
         let status =
             StatusTask::new(peers_tx.subscribe(), msg_tx.clone(), metadata.client()).await?;
+        let beat = BeatTask::new(msg_tx.clone()).await?;
 
         let metadata_handle = tokio::spawn(async move {
             if let Err(e) = metadata.run().await {
@@ -109,6 +112,12 @@ impl Prolink {
         let status_handle = tokio::spawn(async move {
             if let Err(e) = status.run().await {
                 error!(target: "prolink", "status task error: {}", e);
+            }
+        });
+
+        let beat_handle = tokio::spawn(async move {
+            if let Err(e) = beat.run().await {
+                error!(target: "prolink", "beat task error: {}", e);
             }
         });
 
@@ -125,7 +134,7 @@ impl Prolink {
         }
 
         Ok(Prolink {
-            child_tasks: vec![join_handle, status_handle, metadata_handle],
+            child_tasks: vec![join_handle, status_handle, metadata_handle, beat_handle],
             msg_rx,
         })
     }

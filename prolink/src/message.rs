@@ -17,8 +17,23 @@ pub struct Track {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct Beat {
+    pub device_num: u8,
+    pub next_beat: u32,
+    pub second_beat: u32,
+    pub next_bar: u32,
+    pub fourth_beat: u32,
+    pub second_bar: u32,
+    pub eighth_beat: u32,
+    pub pitch: f32,
+    pub bpm: f32,
+    pub beat: u8,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Message {
     PeerJoined(Peer),
     PeerLeft(Peer),
     NewTrack(Track),
+    Beat(Beat),
 }

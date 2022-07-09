@@ -59,6 +59,7 @@ impl ProlinkTask {
                 res = self.prolink.next() => {
                     match res {
                         Ok(Message::NewTrack(t)) => self.handle_new_track(&t).await?,
+                        Ok(Message::Beat(_)) => (), // Throw away beat message for now to avoid spam.
                         _ => println!("msg: {:?}", res)
                     }
 
