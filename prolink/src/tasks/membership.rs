@@ -141,10 +141,11 @@ impl MembershipTask {
             name: self.config.name.clone(),
             proto_ver: 2,
             device_num: self.config.device_num,
-            device_type: 2,
+            unknown_25: 1,
             mac_addr: self.mac_addr,
             ip_addr: self.ip_addr,
             peers_seen: 1,
+            device_type: 2,
             unknown_35: 1,
         };
 
@@ -166,6 +167,7 @@ impl MembershipTask {
         let announce = proto::AnnouncePacket {
             name: self.config.name.clone(),
             proto_ver: 2,
+            device_type: 1,
         };
         let mut announce_data = Vec::new();
         announce.write(&mut announce_data)?;
@@ -181,6 +183,7 @@ impl MembershipTask {
             name: self.config.name.clone(),
             proto_ver: 2,
             pkt_num: 0,
+            device_type: 1,
             mac_addr: self.mac_addr.clone(),
         };
 
@@ -202,6 +205,7 @@ impl MembershipTask {
             mac_addr: self.mac_addr.clone(),
             device_num: self.config.device_num,
             pkt_num: 0,
+            device_type: 1,
             auto_assign: false,
         };
 

@@ -103,6 +103,7 @@ fn write_header(
 pub struct AnnouncePacket {
     pub name: String,
     pub proto_ver: u8,
+    pub device_type: u8,
 }
 
 impl AnnouncePacket {
@@ -115,7 +116,7 @@ impl AnnouncePacket {
             self.proto_ver,
             len,
         )?;
-        w.write_u8(0x01)?;
+        w.write_u8(self.device_type)?;
         if self.proto_ver == 3 {
             w.write_u8(0x00)?;
         }
@@ -124,12 +125,13 @@ impl AnnouncePacket {
     }
     pub fn parse(i: Span) -> IResult<Span, Packet> {
         let (i, hdr) = negotiation_header(PacketType::AnnounceStatus as u8)(i)?;
-        let (i, _) = tag(&[0x01])(i)?;
+        let (i, device_type) = be_u8(i)?;
         Ok((
             i,
             Packet::Announce(AnnouncePacket {
                 name: hdr.name,
                 proto_ver: hdr.proto_ver,
+                device_type: device_type,
             }),
         ))
     }
@@ -140,6 +142,7 @@ pub struct DeviceNumClaim1Packet {
     pub name: String,
     pub proto_ver: u8,
     pub pkt_num: u8,
+    pub device_type: u8,
     pub mac_addr: [u8; 6],
 }
 
@@ -153,7 +156,7 @@ impl DeviceNumClaim1Packet {
             0x2c,
         )?;
         w.write_u8(self.pkt_num)?;
-        w.write_u8(0x01)?;
+        w.write_u8(self.device_type)?;
         w.write_all(&self.mac_addr)?;
         Ok(())
     }
@@ -161,7 +164,7 @@ impl DeviceNumClaim1Packet {
     pub fn parse(i: Span) -> IResult<Span, Packet> {
         let (i, hdr) = negotiation_header(PacketType::DeviceNumClaim1 as u8)(i)?;
         let (i, pkt_num) = be_u8(i)?;
-        let (i, _) = tag(&[0x01])(i)?;
+        let (i, device_type) = be_u8(i)?;
         let (i, mac_addr) = mac_addr(i)?;
 
         Ok((
@@ -170,6 +173,7 @@ impl DeviceNumClaim1Packet {
                 name: hdr.name,
                 proto_ver: hdr.proto_ver,
                 pkt_num,
+                device_type: device_type,
                 mac_addr,
             }),
         ))
@@ -184,6 +188,7 @@ pub struct DeviceNumClaim2Packet {
     pub mac_addr: [u8; 6],
     pub device_num: u8,
     pub pkt_num: u8,
+    pub device_type: u8,
     pub auto_assign: bool,
 }
 
@@ -202,7 +207,7 @@ impl DeviceNumClaim2Packet {
 
         w.write_u8(self.device_num)?;
         w.write_u8(self.pkt_num)?;
-        w.write_u8(01)?;
+        w.write_u8(self.device_type)?;
         w.write_u8(if self.auto_assign { 0x01 } else { 0x02 })?;
         Ok(())
     }
@@ -213,7 +218,7 @@ impl DeviceNumClaim2Packet {
         let (i, mac_addr) = mac_addr(i)?;
         let (i, device_num) = be_u8(i)?;
         let (i, pkt_num) = be_u8(i)?;
-        let (i, _) = tag(&[0x01])(i)?;
+        let (i, device_type) = be_u8(i)?;
         let (i, auto) = be_u8(i)?;
 
         Ok((
@@ -225,6 +230,7 @@ impl DeviceNumClaim2Packet {
                 mac_addr,
                 device_num,
                 pkt_num,
+                device_type,
                 auto_assign: auto == 0x01,
             }),
         ))
@@ -276,10 +282,11 @@ pub struct KeepAlivePacket {
     pub name: String,
     pub proto_ver: u8,
     pub device_num: u8,
-    pub device_type: u8,
+    pub unknown_25: u8,
     pub mac_addr: [u8; 6],
     pub ip_addr: [u8; 4],
     pub peers_seen: u8,
+    pub device_type: u8,
     pub unknown_35: u8,
 }
 
@@ -295,12 +302,19 @@ impl KeepAlivePacket {
 
         w.write_u8(self.device_num)?;
 
-        w.write_u8(self.device_type)?;
+        w.write_u8(self.unknown_25)?;
 
         w.write_all(&self.mac_addr)?;
         w.write_all(&self.ip_addr)?;
 
-        w.write_all(&[self.peers_seen, 0x00, 0x00, 0x00, 0x01, self.unknown_35])?;
+        w.write_all(&[
+            self.peers_seen,
+            0x00,
+            0x00,
+            0x00,
+            self.device_type,
+            self.unknown_35,
+        ])?;
 
         Ok(())
     }
@@ -308,11 +322,12 @@ impl KeepAlivePacket {
     pub fn parse(i: Span) -> IResult<Span, Packet> {
         let (i, hdr) = negotiation_header(PacketType::KeepAlive as u8)(i)?;
         let (i, device_num) = be_u8(i)?;
-        let (i, device_type) = be_u8(i)?;
+        let (i, unknown_25) = be_u8(i)?;
         let (i, mac_addr) = mac_addr(i)?;
         let (i, ip_addr) = ip_addr(i)?;
         let (i, peers_seen) = be_u8(i)?;
-        let (i, _) = tag(&[0x00, 0x00, 0x00, 0x01])(i)?;
+        let (i, _) = tag(&[0x00, 0x00, 0x00])(i)?;
+        let (i, device_type) = be_u8(i)?;
         let (i, unknown_35) = be_u8(i)?;
 
         Ok((
@@ -321,10 +336,11 @@ impl KeepAlivePacket {
                 name: hdr.name,
                 proto_ver: hdr.proto_ver,
                 device_num,
-                device_type,
+                unknown_25,
                 mac_addr,
                 ip_addr,
                 peers_seen,
+                device_type,
                 unknown_35,
             }),
         ))
@@ -754,6 +770,7 @@ mod tests {
                 AnnouncePacket {
                     name: "CDJ-900".to_string(),
                     proto_ver: 2,
+                    device_type: 0x1,
                 },
             ),
             (
@@ -767,6 +784,15 @@ mod tests {
                 AnnouncePacket {
                     name: "CDJ-3000".to_string(),
                     proto_ver: 3,
+                    device_type: 0x1,
+                },
+            ),
+            (
+                include_bytes!("test-data/bad-packet-1657323535929.bin"),
+                AnnouncePacket {
+                    name: "DJM-900NXS2".to_string(),
+                    proto_ver: 2,
+                    device_type: 0x3,
                 },
             ),
         ];
@@ -804,6 +830,7 @@ mod tests {
                     name: "CDJ-900".to_string(),
                     proto_ver: 2,
                     pkt_num: 1,
+                    device_type: 1,
                     mac_addr: [0x00, 0xe0, 0x36, 0xd2, 0x68, 0xf8],
                 },
             ),
@@ -820,7 +847,18 @@ mod tests {
                     name: "CDJ-3000".to_string(),
                     proto_ver: 3,
                     pkt_num: 3,
+                    device_type: 1,
                     mac_addr: [0xc8, 0x3d, 0xfc, 0x0b, 0xf5, 0x1f],
+                },
+            ),
+            (
+                include_bytes!("test-data/bad-packet-1657323536826.bin"),
+                DeviceNumClaim1Packet {
+                    name: "DJM-900NXS2".to_string(),
+                    proto_ver: 2,
+                    pkt_num: 1,
+                    device_type: 3,
+                    mac_addr: [0xc8, 0x3d, 0xfc, 0x0f, 0x50, 0x07],
                 },
             ),
         ];
@@ -858,6 +896,7 @@ mod tests {
                     mac_addr: [0x00, 0xe0, 0x36, 0xd2, 0x68, 0xf8],
                     device_num: 3,
                     pkt_num: 1,
+                    device_type: 1,
                     auto_assign: false,
                 },
             ),
@@ -878,7 +917,21 @@ mod tests {
                     mac_addr: [0xc8, 0x3d, 0xfc, 0x0b, 0xf5, 0x1f],
                     device_num: 2,
                     pkt_num: 1,
+                    device_type: 1,
                     auto_assign: false,
+                },
+            ),
+            (
+                include_bytes!("test-data/bad-packet-1657323537726.bin"),
+                DeviceNumClaim2Packet {
+                    name: "DJM-900NXS2".to_string(),
+                    proto_ver: 2,
+                    ip_addr: [192, 168, 1, 165],
+                    mac_addr: [0xc8, 0x3d, 0xfc, 0x0f, 0x50, 0x07],
+                    device_num: 0x21,
+                    pkt_num: 1,
+                    device_type: 3,
+                    auto_assign: true,
                 },
             ),
         ];
@@ -960,10 +1013,11 @@ mod tests {
                     name: "CDJ-3000".to_string(),
                     proto_ver: 3,
                     device_num: 2,
-                    device_type: 1,
+                    unknown_25: 1,
                     mac_addr: [0xc8, 0x3d, 0xfc, 0x0b, 0xf5, 0x1f],
                     ip_addr: [192, 168, 1, 243],
                     peers_seen: 1,
+                    device_type: 1,
                     unknown_35: 0x24,
                 },
             ),
@@ -981,11 +1035,26 @@ mod tests {
                     name: "CDJ-900".to_string(),
                     proto_ver: 2,
                     device_num: 2,
-                    device_type: 2,
+                    unknown_25: 2,
                     mac_addr: [0x00, 0xe0, 0x36, 0xd2, 0x68, 0xf8],
                     ip_addr: [192, 168, 1, 247],
                     peers_seen: 1,
+                    device_type: 1,
                     unknown_35: 0x00,
+                },
+            ),
+            (
+                include_bytes!("test-data/bad-packet-1657323544826.bin"),
+                KeepAlivePacket {
+                    name: "DJM-900NXS2".to_string(),
+                    proto_ver: 2,
+                    device_num: 0x21,
+                    unknown_25: 2,
+                    mac_addr: [0xc8, 0x3d, 0xfc, 0x0f, 0x50, 0x07],
+                    ip_addr: [192, 168, 1, 165],
+                    peers_seen: 2,
+                    device_type: 3,
+                    unknown_35: 0x31,
                 },
             ),
         ];
