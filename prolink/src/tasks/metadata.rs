@@ -42,10 +42,13 @@ pub struct TrackMetadata {
     pub title: String,
 }
 
+#[derive(Debug)]
 pub struct TrackInfo {
     pub metadata: TrackMetadata,
     pub artwork: Option<Vec<u8>>,
 }
+
+#[derive(Debug)]
 struct MetadataRequest {
     device: u8,
     slot: u8,
@@ -56,6 +59,7 @@ struct MetadataRequest {
 pub(crate) struct MetadataTask {
     peers_rx: broadcast::Receiver<PeerEvent>,
     msg_tx: mpsc::Sender<Message>,
+    peer_addrs: HashMap<u8, IpAddr>,
     nfs_clients: HashMap<u8, NfsClient>,
     databases: HashMap<u8, HashMap<u8, Database>>,
     request_tx: mpsc::Sender<MetadataRequest>,
@@ -71,6 +75,7 @@ impl MetadataTask {
         MetadataTask {
             peers_rx,
             msg_tx,
+            peer_addrs: HashMap::new(),
             nfs_clients: HashMap::new(),
             databases: HashMap::new(),
             request_tx,
@@ -88,7 +93,7 @@ impl MetadataTask {
         loop {
             tokio::select! {
                 _ = self.msg_tx.closed() => {
-                        return Ok(())
+                    return Ok(())
                 }
                 res = self.peers_rx.recv() => {
                     if let Ok(event) = res {
@@ -107,14 +112,15 @@ impl MetadataTask {
     async fn peer_event(&mut self, event: PeerEvent) -> Result<()> {
         match event {
             PeerEvent::Joined(peer) => {
-                let addr = IpAddr::V4(Ipv4Addr::new(
-                    peer.ip_addr[0],
-                    peer.ip_addr[1],
-                    peer.ip_addr[2],
-                    peer.ip_addr[3],
-                ));
-                self.nfs_clients
-                    .insert(peer.device_num, NfsClient::connect(addr).await?);
+                self.peer_addrs.insert(
+                    peer.device_num,
+                    IpAddr::V4(Ipv4Addr::new(
+                        peer.ip_addr[0],
+                        peer.ip_addr[1],
+                        peer.ip_addr[2],
+                        peer.ip_addr[3],
+                    )),
+                );
             }
             PeerEvent::Left(peer) => {
                 self.nfs_clients.remove(&peer.device_num);
@@ -138,6 +144,15 @@ impl MetadataTask {
             .databases
             .entry(request.device)
             .or_insert_with(|| HashMap::new());
+
+        if !self.nfs_clients.contains_key(&request.device) {
+            let addr = self.peer_addrs.get(&request.device).ok_or(anyhow!(
+                "metadata request on peer {} with unkown address",
+                request.device
+            ))?;
+            self.nfs_clients
+                .insert(request.device, NfsClient::connect(*addr).await?);
+        }
 
         let mut client = self.nfs_clients.get_mut(&request.device).unwrap();
         if !dbs.contains_key(&request.slot) {
@@ -220,11 +235,9 @@ impl MetadataTask {
         let prefix = Self::slot_prefix(slot)?;
         let db_path = prefix.to_owned() + "/PIONEER/rekordbox/export.pdb";
         let data = client.get_file(&db_path).await?;
-        info!("db len {}", data.len());
         let mut c = Cursor::new(data);
 
         let db = Database::parse(&mut c).await?;
-        info!("database loaded");
         Ok(db)
     }
 

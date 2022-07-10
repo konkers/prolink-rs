@@ -108,9 +108,6 @@ impl StatusTask {
         if new_track {
             if track.rekordbox_id != 0 {
                 let msg_tx = self.msg_tx.clone();
-                self.metadata
-                    .lookup(pkt.track_device, pkt.track_slot, pkt.rekordbox_id)
-                    .await?;
                 let client = self.metadata.clone();
                 tokio::spawn(async move {
                     if let Err(e) = Self::fecth_metadata(client, track, msg_tx).await {
