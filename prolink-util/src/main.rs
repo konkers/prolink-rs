@@ -35,7 +35,6 @@ impl ProlinkTask {
         let prolink = Prolink::join(Config {
             name: "prolink-util".to_string(),
             device_num: 4,
-            interface_name: Some("Ethernet 4".to_string()),
         })
         .await?;
 

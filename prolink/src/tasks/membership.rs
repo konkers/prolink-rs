@@ -51,24 +51,54 @@ impl MembershipTask {
         peers_tx: broadcast::Sender<PeerEvent>,
         msg_tx: mpsc::Sender<Message>,
     ) -> Result<MembershipTask> {
+        let socket = UdpSocket::bind("0.0.0.0:50000").await?;
+        socket.set_broadcast(true)?;
+
+        // Interface auto detection alogrithm inspried by:
+        //     https://github.com/evanpurkhiser/prolink-connect
+        //
+        // We start by listening for keep alive packets and noting the address
+        // that sent it.
+        let mut buf = [0; 256];
+        let keep_alive_addr = loop {
+            let (len, src) = socket.recv_from(&mut buf).await?;
+            if let Ok(pkt) = proto::Packet::parse_membership(&buf[0..len]) {
+                if let proto::Packet::KeepAlive(_) = pkt {
+                    match src {
+                        SocketAddr::V4(v4) => break v4.ip().clone(),
+                        _ => (),
+                    }
+                }
+            }
+        };
+
+        // Next we get all IPv4 interfaces in the system.
         let all_interfaces =
             NetworkInterface::show().map_err(|e| anyhow!("can't get network interfaces: {}", e))?;
-
         let mut network_interfaces = all_interfaces.iter().filter_map(|iface| ipv4_iface(iface));
 
-        let (name, addr) = if let Some(iface_name) = &config.interface_name {
-            network_interfaces
-                .find(|(name, _)| name == iface_name)
-                .ok_or(anyhow!("Can't find interface \"{}\".", iface_name))?
-        } else {
-            network_interfaces
-                .next()
-                .ok_or(anyhow!("Can't find a default interface."))?
-        };
+        // We then look for an interface who's network keep_alive_addr belongs.
+        let keep_alive_addr = u32::from_be_bytes(keep_alive_addr.octets());
+        let (name, addr) = network_interfaces
+            .find(|(_, addr)| match addr.netmask {
+                None => false,
+                Some(netmask) => {
+                    let netmask = u32::from_be_bytes(netmask.octets());
+                    let iface_addr = u32::from_be_bytes(addr.ip.octets());
+
+                    (iface_addr & netmask) == (keep_alive_addr & netmask)
+                }
+            })
+            .ok_or(anyhow!(
+                "Can't find interface for \"{}\".",
+                &keep_alive_addr
+            ))?;
 
         let mac = mac_address_by_name(&name)
             .map_err(|e| anyhow!("failed to look up mac address: {}", e))?
             .ok_or(anyhow!("failed to look up mac address"))?;
+
+        info!("Listening on {}", name);
         let ip = IpAddr::V4(addr.ip);
         let my_addr = SocketAddr::new(ip, 50000);
         let ip_addr = addr.ip.octets();
@@ -78,9 +108,6 @@ impl MembershipTask {
             IpAddr::V4(addr.broadcast.ok_or(anyhow!("Can't get broacast addr"))?),
             50000,
         );
-
-        let socket = UdpSocket::bind("0.0.0.0:50000").await?;
-        socket.set_broadcast(true)?;
 
         Ok(MembershipTask {
             config: config.clone(),

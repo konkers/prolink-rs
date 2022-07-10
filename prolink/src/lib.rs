@@ -82,7 +82,6 @@ pub type Result<T> = std::result::Result<T, ProlinkError>;
 pub struct Config {
     pub name: String,
     pub device_num: u8,
-    pub interface_name: Option<String>,
 }
 
 pub struct Prolink {
