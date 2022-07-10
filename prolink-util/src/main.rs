@@ -125,7 +125,7 @@ async fn web(decks_rx: watch::Receiver<HashMap<u8, DeckInfo>>) -> Result<()> {
 }
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
+    env_logger::init_from_env(env_logger::Env::default().filter_or("RUST_LOG", "info"));
 
     let (decks_tx, decks_rx) = watch::channel(HashMap::new());
 
