@@ -260,10 +260,15 @@ impl MembershipTask {
                     if let Ok((len, src)) = res {
                         let pkt_buf = &buf[0..len];
                         if src != self.my_addr {
-                            if let Ok(pkt) = proto::Packet::parse(pkt_buf) {
-                                match pkt {
+                            match proto::Packet::parse_membership(pkt_buf) {
+                                Ok(pkt) => match pkt {
                                     proto::Packet::KeepAlive(ka) => self.handle_keep_alive(&ka).await?,
-                                    _ => ()
+                                    _ => (),
+                                }
+                                #[allow(unused_variables)]
+                                Err(e) => {
+                                    #[cfg(feature = "log_bad_packets")]
+                                    log::warn!("can't parse packet: {}", e);
                                 }
                             }
                         }

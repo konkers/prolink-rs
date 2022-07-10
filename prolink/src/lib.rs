@@ -51,7 +51,7 @@ pub enum ProlinkError {
     #[error("terminating")]
     Terminating,
 
-    #[error("{error_kind} error at 0x{pos:x} parsing {timestamp}: \n{dump}")]
+    #[error("{error_kind} error at 0x{pos:x} parsing @{timestamp}: \n{dump}")]
     ParseError {
         error_kind: String,
         pos: usize,

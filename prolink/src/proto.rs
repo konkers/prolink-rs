@@ -1,11 +1,11 @@
-use std::{convert::TryInto, fs, io::Write};
+use std::{convert::TryInto, io::Write};
 
 use anyhow::anyhow;
 use byteorder::{BigEndian, WriteBytesExt};
 use nom::{
     bytes::complete::{tag, take},
     error::context,
-    number::complete::{be_u16, be_u24, be_u32, be_u8},
+    number::complete::{be_i32, be_u16, be_u24, be_u32, be_u8},
     IResult,
 };
 use nom_locate::LocatedSpan;
@@ -17,15 +17,46 @@ use crate::{ProlinkError, Result};
 
 type Span<'a> = LocatedSpan<&'a [u8]>;
 
+/*
 #[derive(FromPrimitive)]
 #[repr(u8)]
 enum PacketType {
     DeviceNumClaim1 = 0x00,
     DeviceNumClaim2 = 0x02,
+    OnAir = 0x3,
     DeviceNumClaim3 = 0x04,
+    MediaQuery = 0x5,
     KeepAlive = 0x06,
     AnnounceStatus = 0x0a, // Both announce and Status packet have 0xa packet types.
     Beat = 0x28,
+}
+*/
+
+#[derive(FromPrimitive)]
+#[repr(u8)]
+enum MembershipPacketType {
+    DeviceNumClaim1 = 0x00,
+    DeviceNumClaim2 = 0x02,
+    DeviceNumClaim3 = 0x04,
+    MixerAssignmentFinished = 0x05,
+    KeepAlive = 0x06,
+    Announce = 0x0a,
+}
+
+#[derive(FromPrimitive)]
+#[repr(u8)]
+enum SyncPacketType {
+    OnAir = 0x3,
+    Unknown04 = 0x4,
+    AbsolutePosition = 0xb,
+    Beat = 0x28,
+}
+
+#[derive(FromPrimitive)]
+#[repr(u8)]
+enum StatusPacketType {
+    MediaQuery = 0x5,
+    PlayerStatus = 0x0a,
 }
 
 struct PacketHeader {
@@ -111,7 +142,7 @@ impl AnnouncePacket {
         let len = if self.proto_ver == 3 { 0x26 } else { 0x25 };
         write_header(
             w,
-            PacketType::AnnounceStatus as u8,
+            MembershipPacketType::Announce as u8,
             &self.name,
             self.proto_ver,
             len,
@@ -124,7 +155,7 @@ impl AnnouncePacket {
         Ok(())
     }
     pub fn parse(i: Span) -> IResult<Span, Packet> {
-        let (i, hdr) = negotiation_header(PacketType::AnnounceStatus as u8)(i)?;
+        let (i, hdr) = negotiation_header(MembershipPacketType::Announce as u8)(i)?;
         let (i, device_type) = be_u8(i)?;
         Ok((
             i,
@@ -150,7 +181,7 @@ impl DeviceNumClaim1Packet {
     pub fn write(&self, w: &mut dyn Write) -> std::io::Result<()> {
         write_header(
             w,
-            PacketType::DeviceNumClaim1 as u8,
+            MembershipPacketType::DeviceNumClaim1 as u8,
             &self.name,
             self.proto_ver,
             0x2c,
@@ -162,7 +193,7 @@ impl DeviceNumClaim1Packet {
     }
 
     pub fn parse(i: Span) -> IResult<Span, Packet> {
-        let (i, hdr) = negotiation_header(PacketType::DeviceNumClaim1 as u8)(i)?;
+        let (i, hdr) = negotiation_header(MembershipPacketType::DeviceNumClaim1 as u8)(i)?;
         let (i, pkt_num) = be_u8(i)?;
         let (i, device_type) = be_u8(i)?;
         let (i, mac_addr) = mac_addr(i)?;
@@ -196,7 +227,7 @@ impl DeviceNumClaim2Packet {
     pub fn write(&self, w: &mut dyn Write) -> std::io::Result<()> {
         write_header(
             w,
-            PacketType::DeviceNumClaim2 as u8,
+            MembershipPacketType::DeviceNumClaim2 as u8,
             &self.name,
             self.proto_ver,
             0x32,
@@ -213,7 +244,7 @@ impl DeviceNumClaim2Packet {
     }
 
     pub fn parse(i: Span) -> IResult<Span, Packet> {
-        let (i, hdr) = negotiation_header(PacketType::DeviceNumClaim2 as u8)(i)?;
+        let (i, hdr) = negotiation_header(MembershipPacketType::DeviceNumClaim2 as u8)(i)?;
         let (i, ip_addr) = ip_addr(i)?;
         let (i, mac_addr) = mac_addr(i)?;
         let (i, device_num) = be_u8(i)?;
@@ -249,7 +280,7 @@ impl DeviceNumClaim3Packet {
     pub fn write(&self, w: &mut dyn Write) -> std::io::Result<()> {
         write_header(
             w,
-            PacketType::DeviceNumClaim3 as u8,
+            MembershipPacketType::DeviceNumClaim3 as u8,
             &self.name,
             self.proto_ver,
             0x26,
@@ -261,7 +292,7 @@ impl DeviceNumClaim3Packet {
     }
 
     pub fn parse(i: Span) -> IResult<Span, Packet> {
-        let (i, hdr) = negotiation_header(PacketType::DeviceNumClaim3 as u8)(i)?;
+        let (i, hdr) = negotiation_header(MembershipPacketType::DeviceNumClaim3 as u8)(i)?;
         let (i, device_num) = be_u8(i)?;
         let (i, pkt_num) = be_u8(i)?;
 
@@ -272,6 +303,45 @@ impl DeviceNumClaim3Packet {
                 proto_ver: hdr.proto_ver,
                 device_num,
                 pkt_num,
+            }),
+        ))
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct MixerAssignmentFinishedPacket {
+    pub name: String,
+    pub proto_ver: u8,
+    pub device_num: u8,
+}
+
+impl MixerAssignmentFinishedPacket {
+    #[allow(unused)]
+    pub fn write(&self, w: &mut dyn Write) -> std::io::Result<()> {
+        write_header(
+            w,
+            MembershipPacketType::MixerAssignmentFinished as u8,
+            &self.name,
+            self.proto_ver,
+            0x26,
+        )?;
+
+        w.write_u8(self.device_num)?;
+        w.write_u8(0x1)?;
+        Ok(())
+    }
+
+    pub fn parse(i: Span) -> IResult<Span, Packet> {
+        let (i, hdr) = negotiation_header(MembershipPacketType::MixerAssignmentFinished as u8)(i)?;
+        let (i, device_num) = be_u8(i)?;
+        let (i, _) = tag(&[0x01])(i)?;
+
+        Ok((
+            i,
+            Packet::MixerAssignmentFinished(MixerAssignmentFinishedPacket {
+                name: hdr.name,
+                proto_ver: hdr.proto_ver,
+                device_num,
             }),
         ))
     }
@@ -294,7 +364,7 @@ impl KeepAlivePacket {
     pub fn write(&self, w: &mut dyn Write) -> std::io::Result<()> {
         write_header(
             w,
-            PacketType::KeepAlive as u8,
+            MembershipPacketType::KeepAlive as u8,
             &self.name,
             self.proto_ver,
             0x36,
@@ -320,7 +390,7 @@ impl KeepAlivePacket {
     }
 
     pub fn parse(i: Span) -> IResult<Span, Packet> {
-        let (i, hdr) = negotiation_header(PacketType::KeepAlive as u8)(i)?;
+        let (i, hdr) = negotiation_header(MembershipPacketType::KeepAlive as u8)(i)?;
         let (i, device_num) = be_u8(i)?;
         let (i, unknown_25) = be_u8(i)?;
         let (i, mac_addr) = mac_addr(i)?;
@@ -349,8 +419,7 @@ impl KeepAlivePacket {
 
 #[derive(Debug, PartialEq)]
 pub struct PlayerStatusExtraData0 {
-    pub unknown_d4: [u8; 28],
-    pub unknown_f4: [u8; 6],
+    pub unknown_d0: [u8; 42],
     pub waveform_color: u8,
     pub unknown_fb: u16,
     pub waveform_pos: u8,
@@ -422,7 +491,7 @@ pub struct PlayerStatusPacket {
 impl PlayerStatusPacket {
     pub fn parse(i: Span) -> IResult<Span, Packet> {
         let (i, _) = header(i)?;
-        let (i, _) = context("packet type", tag(&[PacketType::AnnounceStatus as u8]))(i)?; // TODO: make enum
+        let (i, _) = context("packet type", tag(&[StatusPacketType::PlayerStatus as u8]))(i)?;
         let (i, name) = device_name(i)?;
         let (i, _) = tag(&[0x01])(i)?;
         let (i, unknown_10) = be_u8(i)?;
@@ -518,12 +587,9 @@ impl PlayerStatusPacket {
             (i, None)
         } else if player_type == 0x1f {
             // 0xd0
-            let (i, _) = tag(&[0x12, 0x34, 0x56, 0x78])(i)?;
-            let (i, unknown_d4) = take(28usize)(i)?;
+            let (i, unknown_d0) = take(42usize)(i)?;
 
-            // 0xf0
-            let (i, _) = tag(&[0x12, 0x34, 0x56, 0x78])(i)?;
-            let (i, unknown_f4) = take(6usize)(i)?;
+            // 0xfc
             let (i, waveform_color) = be_u8(i)?;
             let (i, unknown_fb) = be_u16(i)?;
             let (i, waveform_pos) = be_u8(i)?;
@@ -549,8 +615,7 @@ impl PlayerStatusPacket {
             (
                 i,
                 Some(PlayerStatusExtraData0 {
-                    unknown_d4: (*unknown_d4.fragment()).try_into().unwrap(),
-                    unknown_f4: (*unknown_f4.fragment()).try_into().unwrap(),
+                    unknown_d0: (*unknown_d0.fragment()).try_into().unwrap(),
                     waveform_color,
                     unknown_fb,
                     waveform_pos,
@@ -626,6 +691,7 @@ impl PlayerStatusPacket {
         ))
     }
 }
+
 #[derive(Debug, PartialEq)]
 pub struct BeatPacket {
     pub name: String,
@@ -644,7 +710,7 @@ pub struct BeatPacket {
 impl BeatPacket {
     pub fn parse(i: Span) -> IResult<Span, Packet> {
         let (i, _) = header(i)?;
-        let (i, _) = tag(&[PacketType::Beat as u8])(i)?; // TODO: make enum
+        let (i, _) = tag(&[SyncPacketType::Beat as u8])(i)?; // TODO: make enum
         let (i, name) = device_name(i)?;
         let (i, _) = tag(&[0x01, 0x00])(i)?; // TODO: make enum
         let (i, device_num) = be_u8(i)?;
@@ -685,52 +751,262 @@ impl BeatPacket {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct AbsolutePositionPacket {
+    pub name: String,
+    pub device_num: u8,
+    pub track_length: u32,
+    pub playhead: u32,
+    pub pitch: f32,
+    pub bpm: f32,
+}
+
+impl AbsolutePositionPacket {
+    pub fn parse(i: Span) -> IResult<Span, Packet> {
+        let (i, _) = header(i)?;
+        let (i, _) = tag(&[SyncPacketType::AbsolutePosition as u8])(i)?; // TODO: make enum
+        let (i, name) = device_name(i)?;
+        let (i, _) = tag(&[0x02, 0x00])(i)?;
+        let (i, device_num) = be_u8(i)?;
+        let (i, _) = be_u16(i)?; // length should be 0x0018.
+        let (i, track_length) = be_u32(i)?;
+        let (i, playhead) = be_u32(i)?;
+        let (i, pitch_raw) = be_i32(i)?;
+        let pitch = (pitch_raw as f32) / 100.0;
+        let (i, _) = tag(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])(i)?;
+        let (i, bpm_raw) = be_u32(i)?;
+        let bpm = bpm_raw as f32 / 10.0;
+
+        Ok((
+            i,
+            Packet::AbsolutePosition(AbsolutePositionPacket {
+                name,
+                device_num,
+                track_length,
+                playhead,
+                pitch,
+                bpm,
+            }),
+        ))
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct OnAirPacket {
+    pub name: String,
+    pub proto_ver: u8,
+    pub device_num: u8,
+    pub unknown_28: [u8; 5],
+    pub devices: Vec<u8>,
+}
+
+impl OnAirPacket {
+    pub fn parse(i: Span) -> IResult<Span, Packet> {
+        let (i, _) = header(i)?;
+        let (i, _) = tag(&[SyncPacketType::OnAir as u8])(i)?;
+        let (i, name) = device_name(i)?;
+        let (i, _) = tag(&[0x01])(i)?;
+        let (i, proto_ver) = be_u8(i)?;
+        let (i, device_num) = be_u8(i)?;
+        let (i, _) = be_u16(i)?; // length.
+        let (i, dev_data_0) = take(4usize)(i)?;
+        let mut devices = if proto_ver == 3 {
+            Vec::with_capacity(6)
+        } else {
+            Vec::with_capacity(4)
+        };
+
+        for d in dev_data_0.iter() {
+            devices.push(*d);
+        }
+
+        let (i, unknown_28) = take(5usize)(i)?;
+
+        let i = if proto_ver == 3 {
+            let (i, dev_data_1) = take(2usize)(i)?;
+            for d in dev_data_1.iter() {
+                devices.push(*d);
+            }
+            let (i, _) = tag(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00])(i)?;
+            i
+        } else {
+            i
+        };
+
+        Ok((
+            i,
+            Packet::OnAir(OnAirPacket {
+                name,
+                proto_ver,
+                device_num,
+                unknown_28: (*unknown_28.fragment()).try_into().unwrap(),
+                devices,
+            }),
+        ))
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct MediaQueryPacket {
+    pub name: String,
+    pub device_num: u8,
+    pub ip_addr: [u8; 4],
+    pub request_dev: u8,
+    pub request_slot: u8,
+}
+
+impl MediaQueryPacket {
+    pub fn parse(i: Span) -> IResult<Span, Packet> {
+        let (i, _) = header(i)?;
+        let (i, _) = tag(&[StatusPacketType::MediaQuery as u8])(i)?;
+        let (i, name) = device_name(i)?;
+        let (i, _) = tag(&[0x01, 0x00])(i)?;
+        let (i, device_num) = be_u8(i)?;
+        let (i, _) = be_u16(i)?; // length.
+        let (i, ip_addr) = ip_addr(i)?;
+        let (i, _) = tag(&[0x00, 0x00, 0x00])(i)?;
+        let (i, request_dev) = be_u8(i)?;
+        let (i, _) = tag(&[0x00, 0x00, 0x00])(i)?;
+        let (i, request_slot) = be_u8(i)?;
+
+        Ok((
+            i,
+            Packet::MediaQuery(MediaQueryPacket {
+                name,
+                device_num,
+                ip_addr,
+                request_dev,
+                request_slot,
+            }),
+        ))
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct UnknownSync04Packet {
+    pub name: String,
+    device_num: u8,
+    unknown_counter: u8,
+    unknown_device_num: u8,
+}
+
+impl UnknownSync04Packet {
+    pub fn parse(i: Span) -> IResult<Span, Packet> {
+        let (i, _) = header(i)?;
+        let (i, _) = tag(&[SyncPacketType::Unknown04 as u8])(i)?;
+        let (i, name) = device_name(i)?;
+        let (i, _) = tag(&[0x01, 0x00])(i)?;
+        let (i, device_num) = be_u8(i)?;
+        let (i, _) = be_u16(i)?; // length.
+        let (i, unknown_counter) = be_u8(i)?;
+        let (i, unknown_device_num) = be_u8(i)?;
+        let (i, _) = take(62usize)(i)?; // padding, should be 0x00.
+
+        Ok((
+            i,
+            Packet::UnknownSync04(UnknownSync04Packet {
+                name,
+                device_num,
+                unknown_counter,
+                unknown_device_num,
+            }),
+        ))
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Packet {
     Announce(AnnouncePacket),
     DeviceNumClaim1(DeviceNumClaim1Packet),
     DeviceNumClaim2(DeviceNumClaim2Packet),
     DeviceNumClaim3(DeviceNumClaim3Packet),
+    MixerAssignmentFinished(MixerAssignmentFinishedPacket),
     KeepAlive(KeepAlivePacket),
     PlayerStatus(PlayerStatusPacket),
+    AbsolutePosition(AbsolutePositionPacket),
     Beat(BeatPacket),
+    OnAir(OnAirPacket),
+    MediaQuery(MediaQueryPacket),
+    UnknownSync04(UnknownSync04Packet),
 }
 
 impl Packet {
-    pub fn parse_impl(data: Span) -> IResult<Span, Packet> {
+    pub fn parse_membership_impl(data: Span) -> IResult<Span, Packet> {
         let (i, _) = header(data)?;
         let (i, packet_type) = be_u8(i)?;
 
         match FromPrimitive::from_u8(packet_type) {
-            Some(PacketType::DeviceNumClaim1) => DeviceNumClaim1Packet::parse(data),
-            Some(PacketType::DeviceNumClaim2) => DeviceNumClaim2Packet::parse(data),
-            Some(PacketType::DeviceNumClaim3) => DeviceNumClaim3Packet::parse(data),
-            Some(PacketType::KeepAlive) => KeepAlivePacket::parse(data),
-            Some(PacketType::AnnounceStatus) => {
-                // Announce and status packets share the same packet type.
-                // Announce Packets like all port 5000 packets, have a 0x00
-                // following the packet_type field.
-                if data[0xb] == 0x0 {
-                    AnnouncePacket::parse(data)
-                } else {
-                    PlayerStatusPacket::parse(data)
-                }
+            Some(MembershipPacketType::DeviceNumClaim1) => DeviceNumClaim1Packet::parse(data),
+            Some(MembershipPacketType::DeviceNumClaim2) => DeviceNumClaim2Packet::parse(data),
+            Some(MembershipPacketType::DeviceNumClaim3) => DeviceNumClaim3Packet::parse(data),
+            Some(MembershipPacketType::MixerAssignmentFinished) => {
+                MixerAssignmentFinishedPacket::parse(data)
             }
-            Some(PacketType::Beat) => BeatPacket::parse(data),
+            Some(MembershipPacketType::KeepAlive) => KeepAlivePacket::parse(data),
+            Some(MembershipPacketType::Announce) => AnnouncePacket::parse(data),
             _ => Err(nom::Err::Error(nom::error::Error::new(
                 i,
                 nom::error::ErrorKind::Tag,
             ))),
         }
     }
-    pub fn parse(data: &[u8]) -> Result<Packet> {
-        let (i, pkt) = match Self::parse_impl(Span::new(data)) {
+
+    pub fn parse_sync_impl(data: Span) -> IResult<Span, Packet> {
+        let (i, _) = header(data)?;
+        let (i, packet_type) = be_u8(i)?;
+
+        match FromPrimitive::from_u8(packet_type) {
+            Some(SyncPacketType::OnAir) => OnAirPacket::parse(data),
+            Some(SyncPacketType::Unknown04) => UnknownSync04Packet::parse(data),
+            Some(SyncPacketType::AbsolutePosition) => AbsolutePositionPacket::parse(data),
+            Some(SyncPacketType::Beat) => BeatPacket::parse(data),
+            _ => Err(nom::Err::Error(nom::error::Error::new(
+                i,
+                nom::error::ErrorKind::Tag,
+            ))),
+        }
+    }
+
+    pub fn parse_status_impl(data: Span) -> IResult<Span, Packet> {
+        let (i, _) = header(data)?;
+        let (i, packet_type) = be_u8(i)?;
+
+        match FromPrimitive::from_u8(packet_type) {
+            Some(StatusPacketType::MediaQuery) => MediaQueryPacket::parse(data),
+            Some(StatusPacketType::PlayerStatus) => PlayerStatusPacket::parse(data),
+            _ => Err(nom::Err::Error(nom::error::Error::new(
+                i,
+                nom::error::ErrorKind::Tag,
+            ))),
+        }
+    }
+
+    pub fn parse_membership(data: &[u8]) -> Result<Packet> {
+        Self::parse_impl(data, Self::parse_membership_impl)
+    }
+
+    pub fn parse_sync(data: &[u8]) -> Result<Packet> {
+        Self::parse_impl(data, Self::parse_sync_impl)
+    }
+
+    pub fn parse_status(data: &[u8]) -> Result<Packet> {
+        Self::parse_impl(data, Self::parse_status_impl)
+    }
+
+    pub fn parse_impl<F: Fn(Span) -> IResult<Span, Packet>>(
+        data: &[u8],
+        parse: F,
+    ) -> Result<Packet> {
+        let (i, pkt) = match parse(Span::new(data)) {
             Ok((i, pkt)) => (i, pkt),
             Err(e) => {
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?
                     .as_millis();
-                let path = format!("./bad-packets/bad-packet-{}.bin", timestamp);
-                fs::write(&path, data)?;
+                #[cfg(feature = "save_bad_packets")]
+                {
+                    let path = format!("./bad-packets/bad-packet-{}.bin", timestamp);
+                    std::fs::write(&path, data)?;
+                }
                 match e {
                     nom::Err::Error(e) | nom::Err::Failure(e) => {
                         return Err(ProlinkError::ParseError {
@@ -745,7 +1021,7 @@ impl Packet {
             }
         };
         if !i.is_empty() {
-            return Err(anyhow!("packet has extra data {} {:x?}", i.len(), i).into());
+            return Err(anyhow!("packet has extra data {} {:x?}: {:?}", i.len(), i, &pkt).into());
         }
 
         Ok(pkt)
@@ -997,6 +1273,39 @@ mod tests {
     }
 
     #[test]
+    fn test_mixer_assignment_finished() {
+        let test_cases = [
+            (
+                include_bytes!("test-data/bad-packet-1657428836096.bin"),
+                MixerAssignmentFinishedPacket {
+                    name: "DJM-900NXS2".to_string(),
+                    proto_ver: 2,
+                    device_num: 0x21,
+                },
+            ),
+            (
+                include_bytes!("test-data/bad-packet-1657428836098.bin"),
+                MixerAssignmentFinishedPacket {
+                    name: "CDJ-3000".to_string(),
+                    proto_ver: 3,
+                    device_num: 0x3,
+                },
+            ),
+        ];
+        for (data, pkt) in test_cases {
+            let mut c = std::io::Cursor::new(Vec::new());
+            pkt.write(&mut c).unwrap();
+            let v = c.into_inner();
+
+            assert_eq!(v.len(), 0x26);
+            assert_eq!(v.as_slice(), data);
+
+            let (_, parsed) = MixerAssignmentFinishedPacket::parse(Span::new(data)).unwrap();
+            assert_eq!(parsed, Packet::MixerAssignmentFinished(pkt));
+        }
+    }
+
+    #[test]
     fn test_keep_alive() {
         let test_cases = [
             (
@@ -1128,11 +1437,12 @@ mod tests {
                     player_type: 0x1f,
                     unknown_cd: [0xf3, 0x0, 0x0],
                     extra0: Some(PlayerStatusExtraData0 {
-                        unknown_d4: [
-                            0x0, 0x0, 0x0, 0x1, 0x1, 0x1, 0x4, 0x1, 0x2, 0x1, 0x0, 0x0, 0x0, 0x0,
-                            0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                        unknown_d0: [
+                            0x12, 0x34, 0x56, 0x78, 0x0, 0x0, 0x0, 0x1, 0x1, 0x1, 0x4, 0x1, 0x2,
+                            0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                            0x0, 0x0, 0x0, 0x0, 0x0, 0x12, 0x34, 0x56, 0x78, 0x0, 0x0, 0x0, 0x1,
+                            0x1, 0x1,
                         ],
-                        unknown_f4: [0x0, 0x0, 0x0, 0x1, 0x1, 0x1],
                         waveform_color: 0x1,
                         unknown_fb: 0x1,
                         waveform_pos: 0x1,
@@ -1209,6 +1519,116 @@ mod tests {
                 },
             ),
             (
+                &include_bytes!("test-data/bad-packet-1657431753218.bin")[..],
+                PlayerStatusPacket {
+                    name: "CDJ-3000".to_string(),
+                    unknown_10: 6,
+                    device_num: 2,
+                    unknown_16: 0,
+                    active: 0,
+                    track_device: 0,
+                    track_slot: 0,
+                    track_type: 0,
+                    rekordbox_id: 0,
+                    track_num: 0,
+                    unknown_34: [0, 0, 0],
+                    d_l: 0,
+                    unknown_38: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    d_n: 0,
+                    unknown_48: [
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0,
+                    ],
+                    usb_activity: 4,
+                    sd_activity: 4,
+                    u_l: 4,
+                    s_l: 4,
+                    link_available: 0,
+                    unknown_78: 0,
+                    play_mode: 0,
+                    firmware_ver: "1.20".to_string(),
+                    sync_n: 1,
+                    flags: 0x80,
+                    unknown_8b: 0x17,
+                    play_state: 0xfe,
+                    pitch_1: 0xffdf4,
+                    m_v: 0x7fff,
+                    bpm: 0xffff,
+                    unknown_94: 0x7fffffff,
+                    pitch_2: 0,
+                    p_3: 0,
+                    m_m: 0,
+                    m_h: 0xff,
+                    beat: 0xffffffff,
+                    cue: 0x1ff,
+                    bar_beat: 0,
+                    media_presence: 0,
+                    u_e: 0,
+                    s_e: 0,
+                    emergency_loop_active: 0,
+                    pitch_3: 0xffdf4,
+                    pitch_4: 0,
+                    seq_num: 0,
+                    player_type: 0x1f,
+                    unknown_cd: [0xf3, 0, 0],
+                    extra0: Some(PlayerStatusExtraData0 {
+                        unknown_d0: [
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                        waveform_color: 0,
+                        unknown_fb: 0,
+                        waveform_pos: 0,
+                        unknown_fe: [
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0,
+                        ],
+                        buf_f: 0,
+                        buf_b: 0x6d,
+                        buf_s: 0,
+                        unknown_120: [
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 1, 0x64, 0,
+                        ],
+                        master_tempo: 1,
+                        unknown_159: [0, 0, 0],
+                        key: 0x164,
+                        unknown_15f: [0, 0, 0, 0, 0],
+                        key_shift: [0, 0, 0, 0, 0, 0, 0, 0],
+                        unknown_16c: [
+                            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    }),
+                },
+            ),
+            (
                 &include_bytes!("test-data/status-900.bin")[..],
                 PlayerStatusPacket {
                     name: "CDJ-900".to_string(),
@@ -1266,12 +1686,66 @@ mod tests {
         ];
         for (data, pkt) in test_cases {
             let (_, parsed) = PlayerStatusPacket::parse(Span::new(data)).unwrap();
+            println!("{:x?}", parsed);
             assert_eq!(parsed, Packet::PlayerStatus(pkt));
         }
     }
 
     #[test]
-    fn test_parse_packets() {
+    fn test_on_air() {
+        let test_cases = [
+            (
+                include_bytes!("test-data/bad-packet-1657390926698.bin"),
+                OnAirPacket {
+                    name: "DJM-900NXS2".to_string(),
+                    proto_ver: 2,
+                    device_num: 0x21,
+                    unknown_28: [0x0, 0x0, 0x0, 0x0, 0x0],
+                    devices: vec![0, 0, 0, 0],
+                },
+            ),
+            (
+                include_bytes!("test-data/bad-packet-1657432583330.bin"),
+                OnAirPacket {
+                    name: "DJM-900NXS2".to_string(),
+                    proto_ver: 2,
+                    device_num: 0x21,
+                    unknown_28: [0x0, 0x0, 0x1, 0x0, 0x1],
+                    devices: vec![0, 0, 1, 0],
+                },
+            ),
+        ];
+
+        for (data, pkt) in test_cases {
+            let (_, parsed) = OnAirPacket::parse(Span::new(data)).unwrap();
+            assert_eq!(parsed, Packet::OnAir(pkt));
+        }
+    }
+
+    #[test]
+    fn test_absolute_position() {
+        let test_cases = [(
+            include_bytes!("test-data/bad-packet-1657429951551.bin"),
+            AbsolutePositionPacket {
+                name: "CDJ-3000".to_string(),
+                device_num: 0x3,
+                track_length: 215,
+                playhead: 215626,
+                // Comparing floating point numbers here ise dodgy works in practice
+                // for these test cases.
+                pitch: 0.35,
+                bpm: 99.4,
+            },
+        )];
+
+        for (data, pkt) in test_cases {
+            let (_, parsed) = AbsolutePositionPacket::parse(Span::new(data)).unwrap();
+            assert_eq!(parsed, Packet::AbsolutePosition(pkt));
+        }
+    }
+
+    #[test]
+    fn test_parse_status_packets() {
         let test_cases = [
             // Unhandled type 05  &include_bytes!("test-data/bad-packet-1634334264964.bin")[..],
             &include_bytes!("test-data/bad-packet-1634334280362.bin")[..],
@@ -1279,7 +1753,7 @@ mod tests {
             &include_bytes!("test-data/bad-packet-1634334280747.bin")[..],
         ];
         for (i, data) in test_cases.iter().enumerate() {
-            if let Err(e) = Packet::parse(data) {
+            if let Err(e) = Packet::parse_status(data) {
                 panic!("Test {} failed: {}", i, e);
             }
         }

@@ -1,4 +1,4 @@
-use log::{debug, info, warn};
+use log::{info, warn};
 use std::collections::HashMap;
 use tokio::{
     net::UdpSocket,
@@ -53,23 +53,28 @@ impl StatusTask {
                 res = self.socket.recv_from(&mut buf) => {
                     if let Ok((len, _src)) = res {
                         let buf = &buf[0..len];
-                        match  proto::Packet::parse(buf) {
-                            Ok(pkt) => self.handle_packet(&pkt).await?,
-                            Err(e) => debug!(target: "prolink", "error parsing packet {:x?}", e),
-                        }
+                        self.handle_buf(buf).await?;
                     }
                 }
             }
         }
     }
 
-    async fn handle_packet(&mut self, pkt: &proto::Packet) -> Result<()> {
-        match &pkt {
-            &proto::Packet::PlayerStatus(status) => {
-                self.handle_player_status_packet(&status).await?
+    async fn handle_buf(&mut self, buf: &[u8]) -> Result<()> {
+        match proto::Packet::parse_status(buf) {
+            Ok(pkt) => match &pkt {
+                proto::Packet::PlayerStatus(ref status) => {
+                    self.handle_player_status_packet(status).await?
+                }
+                _ => (),
+            },
+            #[allow(unused_variables)]
+            Err(e) => {
+                #[cfg(feature = "log_bad_packets")]
+                log::warn!("can't parse packet: {}", e);
             }
-            _ => (),
         }
+
         Ok(())
     }
 
